@@ -1,10 +1,5 @@
-# Guidance Title (required)
+# Guidance for VPC Lattice automated DNS configuration on AWS
 
-The Guidance title should be consistent with the title established first in Alchemy.
-
-**Example:** *Guidance for Product Substitutions on AWS*
-
-This title correlates exactly to the Guidance it’s linked to, including its corresponding sample code repository. 
 
 
 ## Table of Contents (required)
