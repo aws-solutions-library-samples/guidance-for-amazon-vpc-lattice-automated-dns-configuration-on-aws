@@ -38,6 +38,19 @@ data "aws_iam_policy_document" "sqs_queue_policy" {
   }
 }
 
+resource "aws_sqs_queue" "queue_deadletter" {
+  name = "deadletter-queue"
+}
+
+resource "aws_sqs_queue_redrive_allow_policy" "queue_redrive_allow_policy" {
+  queue_url = aws_sqs_queue.queue_deadletter.id
+
+  redrive_allow_policy = jsonencode({
+    redrivePermission = "byQueue",
+    sourceQueueArns   = [aws_sqs_queue.mySQS.arn]
+  })
+}
+
 # SQS Lambda function invocation
 resource "aws_lambda_event_source_mapping" "sqs_lambda_invocation" {
   event_source_arn = aws_sqs_queue.mySQS.arn
