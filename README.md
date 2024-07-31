@@ -5,7 +5,7 @@ This guidance automates the creation of the DNS resolution (in multi-Account env
 Amazon VPC Lattice is an application networking service that simplifies the connectivity, monitoring, and security of applications within [Amazon Web Services (AWS)](https://aws.amazon.com) Cloud. The main benefits of the service is the configuration and management simplification, allowing developers to focus on building features while Networking & Security administrators can provide guardrails in the services’ communication. Now configuration is not based on IPs, rather on DNS resolution. However, when defining custom domain names for the different services, some extra configuration steps are needed to allow proper DNS resolution in multi-Account environments. This Guidance Solution will automate [Amazon Route 53](https://aws.amazon.com/route53/) DNS configuration from Amazon VPC Lattice actions (create and remove services) in multi-Account environments.
 
 ### Solution reasoning
-In a multi-account environment where Route53 Profiles and Private Hosted Zones are implemented, the DNS resolution of a new VPC Lattice service is updated or created as a new ALIAS record manually. However, when the amount of services scale, this task becomes challenging. This solution automates the update of the DNS configuration when a new VPC Lattice service is created. More information about the solution and its recommended architecture can be found in the implementation guidance.
+In a multi-account environment where Route53 Profiles and Private Hosted Zones are implemented, the DNS resolution of a new VPC Lattice service is updated or created as a new ALIAS record manually. However, when the amount of services scale, this task becomes challenging. This solution automates the update of the DNS configuration when a new VPC Lattice service is created. More information about the solution and its recommended architecture can be found in the implementation guidance (add link).
 
 ## Architecture overview
 Below is the architecture diagram workflow of the Amazon VPC Lattice automated DNS configuration in multi-account environment.
@@ -134,12 +134,12 @@ The deployement of the solutions' resources is done with [Terraform](https://dev
         ```
     - Check that the automation works correctly. To do so, open your R53 PHZ (Private Hosted Zone) in the Networking Account using the AWS Console and delete the record for service1. Then, from the Spoke Account, delete the VPC Lattice service1 and create it again with tag NewService = true (it's also possible to change the flag true-false-true for convenience). Check again the R53 PHZ and the service1 record should have been added automatically.
 
-Please refer to [FULL IMPLEMENTATION GUIDE]() for ...
 
 
 
 
 
+# template ->
 
 ## Table of Contents (required)
 
