@@ -55,7 +55,8 @@ You are responsible for the cost of the AWS services used while running this sol
 We recommend creating a [budget](https://docs.aws.amazon.com/cost-management/latest/userguide/budgets-create.html) through [AWS Cost Explorer](http://aws.amazon.com/aws-cost-management/aws-cost-explorer/) to help manage costs. Prices are subject to change. You can also estimate the cost for your architecture solution using [AWS Pricing Calculator](https://calculator.aws/#/). For full details, refer to the pricing webpage for each AWS service used in this Guidance or visit [Pricing by AWS Service](#pricing-by-aws-service).
 
 ### Estimated monthly cost breakdown - Central Account
-This breakdown of the costs of the Central/Networking Account shows that the highest cost of the automation implementation is the Advanced Parameter Storage resource from AWS Systems Manager service.
+This breakdown of the costs of the Central/Networking Account shows that the highest cost of the automation implementation is the Advanced Parameter Storage resource from AWS Systems Manager service. The costs are estimated in the Ireland `eu-west-1` region for one month.
+
 | **AWS service**  | Dimensions | Cost, month \[USD\] |
 |-----------|------------|------------|
 | AWS Systems Manager  | 2 advanced parameters | \$ 0.10 |
@@ -67,7 +68,7 @@ This breakdown of the costs of the Central/Networking Account shows that the hig
 
 ### Estimated monthly cost breakdown - Spoke Account Onboarding
 
-The following table provides a sample cost breakdown for deploying this guidance in 1,000 different spoke accounts which are likely to provide a VPC Lattice service in the future. The costs are estimated in the Ireland `eu-west-1` region for one month. 
+The following table provides a sample cost breakdown for deploying this guidance in 1,000 different spoke accounts which are likely to provide a VPC Lattice service in the future. 
 
 | **AWS service**  | Dimensions | Cost, month \[USD\] |
 |-----------|------------|------------|
