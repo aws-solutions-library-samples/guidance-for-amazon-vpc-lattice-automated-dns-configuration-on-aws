@@ -5,26 +5,6 @@ In this folder you will find three different folders:
 * networking_account
 * spoke_account
 
-## How to deploy
-1. After downloading the folders, don't forget to update the path of the .py files in the main.tf files of both accounts. Search for "# UPDATE TO YOUR PATH" to help you find it. Regarding the **spoke_account** folder, if you already have your own spoke providers.tf and spoke variables.tf, you won't need to use these BUT don't forget to add the Networking Account ID in your spoke variables.tf.
-2. Using the terminal, locate yourself in the networking folder, access your AWS Account and initialize terraform. If any changes have been made to the code, I recommend to run some validation checks before applying the changes in your AWS account.
-```
-cd networking_account
-(access your AWS Networking Account)
-terraform init
-terraform validate
-terraform plan
-terraform apply
-```
-3. Now, follow the same steps but from the service provider account (or spoke account). Locate yourself in the spoke folder, access you AWS Spoke Account and run terraform as done before.
-```
-cd spoke_account
-(access your AWS Spoke Account)
-terraform init
-terraform validate
-terraform plan
-terraform apply
-```
 ## What am I deploying?
 
 ### Lambda functions
