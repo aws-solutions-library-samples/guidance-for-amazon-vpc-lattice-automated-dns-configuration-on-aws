@@ -8,7 +8,11 @@ Amazon VPC Lattice is an application networking service that simplifies the conn
 In a multi-account environment where Route53 Profiles and Private Hosted Zones are implemented, the DNS resolution of a new VPC Lattice service is updated or created as a new ALIAS record manually. However, when the amount of services scale, this task becomes challenging. This solution automates the update of the DNS configuration when a new VPC Lattice service is created. More information about the solution and its recommended architecture can be found in the implementation guidance (add link).
 
 ## Architecture overview
-Below is the architecture diagram workflow of the Amazon VPC Lattice automated DNS configuration in multi-account environment.
+Below is the architecture diagram workflow of the Amazon VPC Lattice automated DNS configuration in multi-account environment. The workflow is divided in 2 parts:
+- The **first part** (step 1) is executed only once, during the onboarding of the spoke accounts to the central account.
+- The **second part** (steps 2 & 3) is performed whenever a new VPC Lattice service is created.
+
+
 
 <div align="center">
 
@@ -19,7 +23,12 @@ Below is the architecture diagram workflow of the Amazon VPC Lattice automated D
 </div>
 <br/>
 
+First part, onboarding:
+
 1. Once the automation resources are deployed in the account, an [Amazon EventBridge](https://aws.amazon.com/eventbridge/) rule checks if a new [Amazon Simple Notification Service (SNS)](https://aws.amazon.com/sns/) topic has been created. If so, the event is sent to the Networking Account to a custom event bus, notifying about the topic creation. This process invokes the [AWS Lambda](https://aws.amazon.com/lambda/) function responisble for the cross-account subscription of the [Amazon Simple Queue Service (SQS)](https://aws.amazon.com/sqs/) queue in the Networking account to the SNS topic of the spoke account.<br/>
+
+Second part, new VPC Lattice Service:
+
 2. An EventBridge rule checks the tag in a new VPC Lattice service and invokes a Lambda function which will obtain the DNS information of the new VPC Lattice service and publish it to the SNS topic.<br/>
 3. Once the DNS information of the VPC Lattice service arrives to the SQS queue, the Lambda fuction is called to update the information in the Route53 Private Hosted Zone .<br/>
 <br/>
@@ -38,14 +47,23 @@ Below is the architecture diagram workflow of the Amazon VPC Lattice automated D
 [AWS Resource Access Manager (RAM)](https://aws.amazon.com/ram/)| Support Service | Used to store parameters that will later be shared. | [Documentation](https://docs.aws.amazon.com/general/latest/gr/ram.html#ram_region) |
 
 
-## Plan your deployment
-This guidance is based on a multi-account environment, more especifically, an account providing a service and an account with the Route53 Profiles records. It can be extended to multiple provider or spoke accounts.
 
-### Cost 
+## Cost 
 
-You are responsible for the cost of the AWS services used while running this solution guidance. As of August 2024, the cost for running this guidance with the default settings in the EU-West(Ireland) `eu-west-1` Region is almost none since the only resource that doesn't fit in the Free Tier is the use of AWS Systems Manager Advanced Parameter storage, which is \$0.10 monthly with 2 parameters.
+You are responsible for the cost of the AWS services used while running this solution guidance. As of August 2024, the cost for running this guidance with the default settings in the EU-West(Ireland) `eu-west-1` Region is almost **none** since the only resource that doesn't fit in the Free Tier is the use of AWS Systems Manager Advanced Parameter storage.
 
-We recommend creating a [budget](https://docs.aws.amazon.com/cost-management/latest/userguide/budgets-create.html) through [AWS Cost Explorer](http://aws.amazon.com/aws-cost-management/aws-cost-explorer/) to help manage costs. Prices are subject to change. For full details, refer to the pricing webpage for each AWS service used in this Guidance.
+We recommend creating a [budget](https://docs.aws.amazon.com/cost-management/latest/userguide/budgets-create.html) through [AWS Cost Explorer](http://aws.amazon.com/aws-cost-management/aws-cost-explorer/) to help manage costs. Prices are subject to change. You can also estimate the cost for your architecture solution using [AWS Pricing Calculator](https://calculator.aws/#/). For full details, refer to the pricing webpage for each AWS service used in this Guidance or visit [Pricing by AWS Service](#pricing-by-aws-service).
+
+### Estimated monthly cost breakdown - Central Account
+This breakdown of the costs of the Central/Networking Account shows that the highest cost of the automation implementation is the Advanced Parameter Storage resource from AWS Systems Manager service.
+| **AWS service**  | Dimensions | Cost, month \[USD\] |
+|-----------|------------|------------|
+| AWS Systems Manager  | 2 advanced parameters | \$ 0.10 |
+| Amazon EventBridge  | < 1 million custom events | \$ 0.00 |
+| AWS Lambda  | < 1 million requests & 400,000 GB-seconds of compute time | \$ 0.00 |
+| Amazon SQS | < 1 million requests| \$ 0.00 | 
+| **TOTAL estimate** |  | **\$ 0.10** |
+
 
 ### Estimated monthly cost breakdown - Spoke Account Onboarding
 
@@ -70,6 +88,20 @@ Most services in this solution are in idle state unless they are triggered by an
 | Amazon SNS  | 500 requests | \$ 0.00|
 | Amazon SQS | 500 requests| \$ 0.00 | 
 | **TOTAL estimate** |  | **\$ 0.00** |
+
+This example shows how cost-efficient the solution is with a high VPC Lattice service offer.
+
+### Pricing by AWS Service
+Bellow are the pricing references for each AWS Service used in this Guidance Solution.
+| **AWS service**  |  Pricing  |
+|-----------|---------------|
+|[Amazon EventBridge](https://aws.amazon.com/eventbridge/)| [Documentation](https://aws.amazon.com/eventbridge/pricing/) |
+[Amazon Lambda](https://aws.amazon.com/lambda/)|  [Documentation](https://aws.amazon.com/lambda/pricing/) |
+[Amazon SNS](https://aws.amazon.com/sns/)|  [Documentation](https://aws.amazon.com/sns/pricing/) |
+[Amazon SQS](https://aws.amazon.com/sqs/)| [Documentation](https://aws.amazon.com/sqs/pricing/) |
+[Amazon Route53](https://aws.amazon.com/route53/)| [Documentation](https://aws.amazon.com/route53/pricing/) |
+[AWS Systems Manager](https://aws.amazon.com/systems-manager/)|  [Documentation](https://aws.amazon.com/systems-manager/pricing/) |
+
 
 
 <br/>
