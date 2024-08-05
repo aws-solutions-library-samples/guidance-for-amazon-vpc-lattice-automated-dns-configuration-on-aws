@@ -1,5 +1,6 @@
 # Guidance for VPC Lattice automated DNS configuration on AWS
 
+
 This guidance automates the creation of the DNS resolution (in multi-Account environments) needed when creating [Amazon VPC Lattice](https://aws.amazon.com/vpc/lattice/) services with custom domain names.
 
 Amazon VPC Lattice is an application networking service that simplifies the connectivity, monitoring, and security of applications within [Amazon Web Services (AWS)](https://aws.amazon.com) Cloud. The main benefits of the service is the configuration and management simplification, allowing developers to focus on building features while Networking & Security administrators can provide guardrails in the services’ communication. Now configuration is not based on IPs, rather on DNS resolution. However, when defining custom domain names for the different services, some extra configuration steps are needed to allow proper DNS resolution in multi-Account environments. This Guidance Solution will automate [Amazon Route 53](https://aws.amazon.com/route53/) DNS configuration from Amazon VPC Lattice actions (create and remove services) in multi-Account environments.
