@@ -31,5 +31,8 @@ override.tf.json
 terraform.rc
 .terraform.lock.hcl
 
+# ZIP files
+*.zip
+
 # DS_Store
 .DS_Store
