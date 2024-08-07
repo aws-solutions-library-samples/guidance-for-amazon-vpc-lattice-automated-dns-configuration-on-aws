@@ -13,14 +13,14 @@ def lambda_handler(event, context):
 
     sqs_arn = os.environ['SQS_ARN']
     sns_arn = event['resources'][0]
-    tag_value = event['detail']['tags']['NewService']
+    tag_value = event['detail']['tags']['NewSNS']
 
     if tag_value == 'true':
         logger.info('New service SNS topic tag found')
         logger.info('SNS ARN: {}'.format(sns_arn))
 
         # Subscribe the SQS queue to the SNS topic
-        sns.subscribe(
+        response = sns.subscribe(
                 TopicArn = sns_arn,
                 Protocol = 'sqs',
                 Endpoint = sqs_arn,
@@ -29,5 +29,5 @@ def lambda_handler(event, context):
     
     return {
         'statusCode': 200,
-        'body': json.dumps('Hello from Lambda!')
+        'body': response
     }
