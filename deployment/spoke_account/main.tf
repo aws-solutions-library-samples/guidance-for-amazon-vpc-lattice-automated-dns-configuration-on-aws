@@ -21,12 +21,35 @@ locals {
 # ---------- SNS TOPIC ----------
 resource "aws_sns_topic" "new_vpc_lattice_service" {
   name = "New-VPCLattice-Service"
+}
 
-  tags = {
-    NewSNS = "true"
+# Lambda function used to tag the SNS Topic (and generate an EventBridge event)
+data "archive_file" "tag_sns" {
+  type        = "zip"
+  source_file = "${path.module}/../lambda_functions/tag_sns.py"
+  output_path = "${path.module}/../lambda_functions/tag_sns.zip"
+}
+
+resource "aws_lambda_function" "tag_sns" {
+  filename         = "${path.module}/../lambda_functions/tag_sns.zip"
+  function_name    = "tag_sns"
+  role             = aws_iam_role.lambda_role.arn
+  handler          = "tag_sns.lambda_handler"
+  source_code_hash = data.archive_file.tag_sns.output_base64sha256
+  runtime          = "python3.12"
+
+  environment {
+    variables = {
+      SNS_TOPIC = aws_sns_topic.new_vpc_lattice_service.arn
+    }
   }
+}
 
-  depends_on = [ aws_cloudwatch_event_target.my_busevent_target ]
+resource "aws_lambda_invocation" "tagsns_invocation" {
+  function_name = aws_lambda_function.tag_sns.function_name
+  input         = ""
+
+  depends_on = [aws_cloudwatch_event_target.my_busevent_target]
 }
 
 # ---------- ONBOARDING SNS TOPICS TO NETWORKING SQS QUEUE ----------

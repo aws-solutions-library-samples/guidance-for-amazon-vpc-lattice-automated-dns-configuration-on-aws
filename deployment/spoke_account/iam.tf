@@ -3,6 +3,20 @@
 
 # ---------- automation/spoke_account/iam.tf ----------
 
+# ---------- LAMBDA ASSUME ROLE ----------
+data "aws_iam_policy_document" "assume_role" {
+  statement {
+    effect = "Allow"
+
+    principals {
+      type        = "Service"
+      identifiers = ["lambda.amazonaws.com"]
+    }
+
+    actions = ["sts:AssumeRole"]
+  }
+}
+
 # ---------- SNS TOPIC POLICY ----------
 resource "aws_sns_topic_policy" "new_vpc_lattice_service" {
   arn    = aws_sns_topic.new_vpc_lattice_service.arn
@@ -103,14 +117,47 @@ resource "aws_iam_role_policy_attachment" "attach_cross_account_policy" {
   policy_arn = aws_iam_policy.rule_role_policy.arn
 }
 
+# Lambda function role (Tagging SNS topic)
+resource "aws_iam_role" "lambda_tagsns_role" {
+  name               = "TagSNSRole"
+  path               = "/"
+  assume_role_policy = data.aws_iam_policy_document.assume_role.json
+}
+
+# Lambda function policies (Tagging SNS topic)
+resource "aws_iam_role_policy_attachment" "tagsns_lambda_policy_attachment" {
+  role       = aws_iam_role.lambda_role.name
+  policy_arn = aws_iam_policy.tagsns_lambda_policy.arn
+}
+
+resource "aws_iam_role_policy_attachment" "tagsns_lambdabasic_policy_attachment" {
+  role       = aws_iam_role.lambda_role.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+}
+
+resource "aws_iam_policy" "tagsns_lambda_policy" {
+  name        = "TagSNSLambdaPolicy"
+  path        = "/"
+  description = "AWS Lambda permissions to tag SNS topics."
+
+  policy = data.aws_iam_policy_document.tagsns_lambda_policy.json
+}
+
+data "aws_iam_policy_document" "tagsns_lambda_policy" {
+  statement {
+    sid       = "AllowSNSTaggin"
+    effect    = "Allow"
+    actions   = ["sns:*"]
+    resources = [aws_sns_topic.new_vpc_lattice_service.arn]
+  }
+}
+
 # ---------- CATCHING NEW VPC LATTICE SERVICES AND NOTIFYING NETWORKING ACCOUNT ----------
 # Lambda function role
 resource "aws_iam_role" "lambda_role" {
-  name = "NewVPCLatticeServiceRole"
-  path = "/"
-
-  assume_role_policy  = data.aws_iam_policy_document.assume_role.json
-  managed_policy_arns = ["arn:aws:iam::aws:policy/AdministratorAccess"]
+  name               = "NewVPCLatticeServiceRole"
+  path               = "/"
+  assume_role_policy = data.aws_iam_policy_document.assume_role.json
 }
 
 # Lambda function policies
@@ -122,19 +169,6 @@ resource "aws_iam_role_policy_attachment" "lambda_policy_attachment" {
 resource "aws_iam_role_policy_attachment" "lambda_managed_lamdbabasic_policy_attachment" {
   role       = aws_iam_role.lambda_role.name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
-}
-
-data "aws_iam_policy_document" "assume_role" {
-  statement {
-    effect = "Allow"
-
-    principals {
-      type        = "Service"
-      identifiers = ["lambda.amazonaws.com"]
-    }
-
-    actions = ["sts:AssumeRole"]
-  }
 }
 
 resource "aws_iam_policy" "lambda_policy" {
@@ -157,6 +191,6 @@ data "aws_iam_policy_document" "lambda_policy" {
     sid       = "AllowSNSPublish"
     effect    = "Allow"
     actions   = ["sns:Publish"]
-    resources = ["${aws_sns_topic_policy.new_vpc_lattice_service.arn}"]
+    resources = ["${aws_sns_topic.new_vpc_lattice_service.arn}"]
   }
 }
