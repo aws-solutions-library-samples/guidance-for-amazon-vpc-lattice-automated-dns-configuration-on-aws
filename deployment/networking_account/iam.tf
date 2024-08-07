@@ -132,12 +132,12 @@ resource "aws_iam_role_policy_attachment" "dns_lambda_policy_attachment" {
 }
 
 resource "aws_iam_role_policy_attachment" "dns_lambda_managed_lamdbabasic_policy_attachment" {
-  role       = aws_iam_role.subs_lambda_role.name
+  role       = aws_iam_role.dns_lambda_role.name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
 }
 
 resource "aws_iam_role_policy_attachment" "dns_lambda_managed_sqsexecution_policy_attachment" {
-  role       = aws_iam_role.subs_lambda_role.name
+  role       = aws_iam_role.dns_lambda_role.name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaSQSQueueExecutionRole"
 }
 

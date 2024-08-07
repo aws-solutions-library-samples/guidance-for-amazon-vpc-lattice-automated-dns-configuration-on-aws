@@ -1,4 +1,7 @@
-# ---------- root/providers.tf ----------
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
+# ---------- test/consumer_account/providers.tf ----------
 
 terraform {
   required_version = ">= 1.3.0"
@@ -11,13 +14,6 @@ terraform {
       source  = "hashicorp/awscc"
       version = "= 0.78.0"
     }
-  }
-
-  backend "s3" {
-    bucket         = "tfstate-dns-automation"
-    key            = "vpclattice"
-    region         = "eu-west-1"
-    dynamodb_table = "tfstate-dns-automation"
   }
 }
 
