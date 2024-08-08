@@ -20,7 +20,8 @@ locals {
 
 # ---------- SNS TOPIC ----------
 resource "aws_sns_topic" "new_vpc_lattice_service" {
-  name = "New-VPCLattice-Service"
+  name              = "New-VPCLattice-Service"
+  kms_master_key_id = "alias/aws/sns"
 }
 
 # Lambda function used to tag the SNS Topic (and generate an EventBridge event)

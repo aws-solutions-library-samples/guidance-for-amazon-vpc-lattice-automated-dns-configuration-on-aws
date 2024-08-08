@@ -14,6 +14,6 @@ variable "networking_account" {
 }
 
 variable "custom_domain_name" {
-    description = "VPC Lattice service's custom domain name."
-    type = string
+  description = "VPC Lattice service's custom domain name."
+  type        = string
 }

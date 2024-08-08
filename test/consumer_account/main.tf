@@ -26,15 +26,15 @@ module "vpc" {
   }
 
   subnets = {
-    workload = { netmask = 28 }
+    workload  = { netmask = 28 }
     endpoints = { netmask = 28 }
   }
 }
 
 # ---------- AMAZON ROUTE 53 PROFILE VPC ASSOCATION ----------
 resource "awscc_route53profiles_profile_association" "r53_profile_vpc_association" {
-  name         = "vpc-association"
-  profile_id   = local.networking_resources.r53_profile
+  name        = "vpc-association"
+  profile_id  = local.networking_resources.r53_profile
   resource_id = module.vpc.vpc_attributes.id
 }
 

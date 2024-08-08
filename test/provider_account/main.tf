@@ -14,45 +14,45 @@ locals {
 
 # ---------- VPC LATTICE SERVICE ----------
 module "vpc_lattice_service" {
-    source  = "aws-ia/amazon-vpc-lattice-module/aws"
-    version = "0.2.0"
+  source  = "aws-ia/amazon-vpc-lattice-module/aws"
+  version = "0.2.0"
 
-    service_network = {
-        identifier = local.networking_resources.service_network
-    }
+  service_network = {
+    identifier = local.networking_resources.service_network
+  }
 
-    services = {
-        lambda = {
-            name = "lambda-service"
-            auth_type = "NONE"
-            custom_domain_name = var.custom_domain_name
+  services = {
+    lambda = {
+      name               = "lambda-service"
+      auth_type          = "NONE"
+      custom_domain_name = var.custom_domain_name
 
-            listeners = {
-                http = {
-                    port = 80
-                    protocol = "HTTP"
-                    default_action_forward = {
-                        target_groups = {
-                            lambdatarget = { weight = 100 }
-                        }
-                    }
-                }
+      listeners = {
+        http = {
+          port     = 80
+          protocol = "HTTP"
+          default_action_forward = {
+            target_groups = {
+              lambdatarget = { weight = 100 }
             }
+          }
         }
+      }
     }
+  }
 
-    target_groups = {
-        lambdatarget = {
-            type = "LAMBDA"
-            targets = {
-                lambda_function = { id = aws_lambda_function.service_lambda.arn }
-            }
-        }
+  target_groups = {
+    lambdatarget = {
+      type = "LAMBDA"
+      targets = {
+        lambda_function = { id = aws_lambda_function.service_lambda.arn }
+      }
     }
+  }
 
-    tags = {
-        NewService = true
-    }
+  tags = {
+    NewService = true
+  }
 }
 
 # ---------- LAMBDA FUNCTION ----------

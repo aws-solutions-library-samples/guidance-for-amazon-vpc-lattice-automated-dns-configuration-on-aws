@@ -45,6 +45,37 @@ cd test/provider_account
 terraform apply
 ```
 
+## Clean-up
+
+1. **Networking Account** Remove all the Alias records created in the Private Hosted Zone, and remove all the SNS subscriptions in the SQS queue.
+
+2. **Consumer Account** Remove the consumer VPC and related resources.
+
+```
+cd test/consumer_account
+terraform destroy
+```
+
+3. **Provider Account** Remove both the VPC Lattice service and Guidance Solution automation.
+
+```
+cd test/provider_account
+terraform destroty
+
+cd deployment/spoke_account
+terraform destroy
+```
+
+4. **Networking Account** Remove the VPC Lattice service network, Route 53 Profile and Private Hosted Zone, and Guidance Solution automation.
+
+```
+cd test/networking_account
+terraform destroty
+
+cd deployment/networking_account
+terraform destroy
+```
+
 ## What am I deploying?
 
 ### [consumer_account](./consumer_account/)

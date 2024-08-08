@@ -110,7 +110,8 @@ resource "aws_lambda_function" "subs_lambda" {
 # ---------- CREATE ALIAS RECORD (VPC LATTICE DNS INFORMATION) ----------
 # SQS Queue - receiving events from the Spoke Accounts when new VPC Lattice services are created
 resource "aws_sqs_queue" "phz_information_queue" {
-  name = "phz_information_queue"
+  name                    = "phz_information_queue"
+  sqs_managed_sse_enabled = true
 
   redrive_policy = jsonencode({
     deadLetterTargetArn = aws_sqs_queue.queue_deadletter.arn
@@ -120,7 +121,8 @@ resource "aws_sqs_queue" "phz_information_queue" {
 
 # Dead-Letter queue
 resource "aws_sqs_queue" "queue_deadletter" {
-  name = "deadletter-queue"
+  name                    = "deadletter-queue"
+  sqs_managed_sse_enabled = true
 }
 
 # SQS Lambda function invocation
