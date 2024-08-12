@@ -6,7 +6,7 @@ In this folder you can find code building the VPC Lattice and Amazon Route 53 re
 * networking_account
 * provider_account
 
-## How to deploy this test code?
+## How to deploy this test code?
 
 The test code assumes all the AWS Accounts are in the same AWS Organization - all the resources are shared using AWS RAM to the AWS Organization. If that's not the case, change the corresponding RAM resources in the *networking_account* folder to share with the corresponding AWS Accounts.
 
@@ -45,7 +45,7 @@ cd test/provider_account
 terraform apply
 ```
 
-## Clean-up
+## Clean-up
 
 1. **Networking Account** Remove all the Alias records created in the Private Hosted Zone, and remove all the SNS subscriptions in the SQS queue.
 
