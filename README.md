@@ -6,6 +6,12 @@ Amazon VPC Lattice is an application networking service that simplifies the conn
 
 This Guidance Solution automate the configuration of DNS resolution anytime a new VPC Lattice service (with a custom domain name configured) is created. In this README, you will find only the deployment steps. For more information about the Guidance Solution, check the [Implementation Guide](TO ADD).
 
+<div align="center">
+
+![picture](/assets/reference_architecture.png)
+
+</div>
+
 ## Deploy the Guidance 
 
 **Time to deploy**: deployment times will vary depending the AWS Account type.
