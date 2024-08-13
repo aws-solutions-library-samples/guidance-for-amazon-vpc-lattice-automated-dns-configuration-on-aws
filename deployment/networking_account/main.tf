@@ -157,8 +157,8 @@ resource "aws_lambda_function" "dns_lambda" {
 # Adding guidance solution ID via AWS CloudFormation resource
 #--------------------------------------------------------------
 resource "aws_cloudformation_stack" "guidance_deployment_metrics" {
-    name = "tracking-stack"
-    template_body = <<STACK
+  name          = "tracking-stack"
+  template_body = <<STACK
     {
         "AWSTemplateFormatVersion": "2010-09-09",
         "Description": "Guidance for VPC Lattice automated DNS configuration on AWS (SXXXXX)",

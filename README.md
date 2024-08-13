@@ -13,10 +13,10 @@ This guidance automates the creation of DNS (Domain Name System) resolution conf
     - [Third-party tools](#third-party-tools)
     - [AWS Account requirements](#aws-account-requirements)
     - [Service quotas](#service-quotas)
-    - [Encryption at rest](#encryption-at-rest)
 3. [Deploy the Guidance](#deploy-the-guidance)
 4. [Uninstall the Guidance](#uninstall-the-guidance)
 5. [Security](#security)
+    - [Encryption at rest](#encryption-at-rest)
 5. [License](#license)
 6. [Contributing](#contributing)
 
@@ -99,7 +99,7 @@ Bellow are the pricing references for each AWS Service used in this Guidance Sol
 [Amazon SQS](https://aws.amazon.com/sqs/)| [Documentation](https://aws.amazon.com/sqs/pricing/) |
 [AWS Systems Manager](https://aws.amazon.com/systems-manager/)|  [Documentation](https://aws.amazon.com/systems-manager/pricing/) |
 
-## Prerequisites
+## Prerequisites
 
 ### Operating System
 
@@ -119,9 +119,7 @@ We use the local backend configuration to store the state files. We recommend th
 
 ### AWS account requirements
 
-These instructions require AWS credentials configured according to the [Terraform AWS Provider documentation](https://registry.terraform.io/providers/-/aws/latest/docs#authentication-and-configuration).
-
-The credentials must have IAM permission to create and update resources in the Account - these persmissions will vary depending the Account type (*networking* or *spoke*). 
+These instructions require AWS credentials configured according to the [Terraform AWS Provider documentation](https://registry.terraform.io/providers/-/aws/latest/docs#authentication-and-configuration). The credentials must have IAM permission to create and update resources in the Account - these persmissions will vary depending the Account type (*networking* or *spoke*). 
 
 In addition, the Guidance Solution supposes your Accounts are part of the same [AWS Organization](https://aws.amazon.com/organizations/) - as IAM policies restrict cross-Account actions between Accounts within the same Organization. For RAM share to work, you need to [enable resource sharing with the Organization](https://docs.aws.amazon.com/ram/latest/userguide/getting-started-sharing.html#getting-started-sharing-orgs).
 
@@ -131,23 +129,14 @@ Make sure you have sufficient quota for each of the services implemented in this
 
 To view the service quotas for all AWS services in the documentation without switching pages, view the information in the [Service endpoints and quotas](https://docs.aws.amazon.com/general/latest/gr/aws-general.pdf#aws-service-information) page in the PDF instead.
 
-### Encryption at rest
-
-Encryption at rest is configured in the SNS topic and SQS queues, using AWS-managed keys. Systems Manager parameters are not configured as `SecureString` due they must be encrypted with a customer managed key, and you must share the key separately through [AWS Key Management Service](https://aws.amazon.com/kms/) (KMS).
-
-* Given its sensitivity, we are not creating any KMS resource in this Guidance Solution.
-* If you would like to use customer managed keys to encrypt at rest the data of all these services, you will to change the code to configure this option in the corresponding resources: 
-    * [SNS topic](https://docs.aws.amazon.com/sns/latest/dg/sns-server-side-encryption.html)
-    * [SQS queue](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-server-side-encryption.html)
-    * [Systems Manager parameter](https://docs.aws.amazon.com/kms/latest/developerguide/services-parameter-store.html).
-
 ## Deploy the Guidance 
 
-Below are the instructions to deploy the automation:
+| **Account type** |  **Deployment time (min)**  |
+|------------------|-----------------------------|
+| Networking       | 3                           | 
+| Spoke            | 2                           |
 
-**Time to deploy**: deployment times will vary depending the AWS Account type.
-* *Networking Account*: 3 minutes
-* *Spoke Account*: 2 minutes (per Account)
+Below are the instructions to deploy the automation:
 
 * **Step 1: Networking AWS Account**.
     * *Variables needed*: AWS Region to deploy the resources, and Private Hosted ID to create the Alias records.
@@ -199,6 +188,16 @@ When you build systems on AWS infrastructure, security responsibilities are shar
 This guidance relies on a lot of reasonable default options and "principle of least privilege" access for all resources. Users that deploy it in production should go through all the deployed resources and ensure those defaults comply with their security requirements and policies, have adequate logging levels and alarms enabled and protect access to publicly exposed APIs. In SQS and SNS, the Resource Policies are defined such that only the specified account/organization/resource can access such resource. IAM Roles are defined for AWS Lambda to only access the corresponding resources such as EventBridge, SQS and SNS. AWS RAM securely shares resource parameter such as SQS queue ARN and Eventbridge custom event bus ARN. This limits the access to the VPC Lattice DNS resolution automation to the configuration resources and involved accounts only.
 
 **NOTE**: Please note that by cloning and using 3rd party open-source code you assume responsibility for its patching/securing/managing in the context of this project.
+
+### Encryption at rest
+
+Encryption at rest is configured in the SNS topic and SQS queues, using AWS-managed keys. Systems Manager parameters are not configured as `SecureString` due they must be encrypted with a customer managed key, and you must share the key separately through [AWS Key Management Service](https://aws.amazon.com/kms/) (KMS).
+
+* Given its sensitivity, we are not creating any KMS resource in this Guidance Solution.
+* If you would like to use customer managed keys to encrypt at rest the data of all these services, you will to change the code to configure this option in the corresponding resources: 
+    * [SNS topic](https://docs.aws.amazon.com/sns/latest/dg/sns-server-side-encryption.html)
+    * [SQS queue](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-server-side-encryption.html)
+    * [Systems Manager parameter](https://docs.aws.amazon.com/kms/latest/developerguide/services-parameter-store.html).
 
 ## License
 
