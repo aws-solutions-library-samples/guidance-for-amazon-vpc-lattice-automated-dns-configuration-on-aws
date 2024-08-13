@@ -23,6 +23,7 @@ No modules.
 
 | Name | Type |
 |------|------|
+| [aws_cloudformation_stack.guidance_deployment_metrics](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudformation_stack) | resource |
 | [aws_cloudwatch_event_bus.new_sns_eventbus](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudwatch_event_bus) | resource |
 | [aws_cloudwatch_event_bus_policy.allow_organization](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudwatch_event_bus_policy) | resource |
 | [aws_cloudwatch_event_rule.new_sns_eventrule](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudwatch_event_rule) | resource |
