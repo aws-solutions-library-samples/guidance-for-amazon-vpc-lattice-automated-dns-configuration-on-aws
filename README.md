@@ -34,7 +34,7 @@ Below is the diagram workflow of the Guidance for VPC Lattice automated DNS conf
 
 <div align="center">
 
-![picture](/vpc_lattice_dns_images/reference_architecture_numbers.png)
+![picture](/assets/reference_architecture_numbers.png)
 
 </div>
 
