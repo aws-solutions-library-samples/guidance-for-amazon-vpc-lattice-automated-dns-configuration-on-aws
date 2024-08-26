@@ -136,6 +136,12 @@ To view the service quotas for all AWS services in the documentation without swi
 | Networking       | 3                           | 
 | Spoke            | 2                           |
 
+**TO DO - REPLACE THE IG LINK BELOW WITH PRODUCTION VERSION**
+
+Please see the detailed Implementation Guide [here](https://implementationguides.kits.eventoutfitters.aws.dev/vpc-lattice-0716/networking/vpc-lattice-automated-dns-configuration.html)
+
+**TO DO RVIEW SECTIONS BELOW AND DECIDE WHETHER THEY NEED TO BE KEPT OR MOVED TO GITLAB BASED IG**
+
 Below are the instructions to deploy the automation:
 
 * **Step 1: Networking AWS Account**.
