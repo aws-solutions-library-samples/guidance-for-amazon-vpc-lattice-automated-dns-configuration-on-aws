@@ -36,6 +36,7 @@ Below is the diagram workflow of the Guidance for VPC Lattice automated DNS conf
 
 ![picture](/assets/reference_architecture_numbers.png)
 
+Figure 1. VPC Lattice automated DNS configuration on AWS - Reference Architecture
 </div>
 
 The workflow is divided in two parts:
