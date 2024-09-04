@@ -143,6 +143,7 @@ Please see the detailed Implementation Guide [here](https://implementationguides
 
 **TO DO RVIEW SECTIONS BELOW AND DECIDE WHETHER THEY NEED TO BE KEPT OR MOVED TO GITLAB BASED IG**
 
+<!--
 Below are the instructions to deploy the automation:
 
 * **Step 1: Networking AWS Account**.
@@ -205,6 +206,7 @@ Encryption at rest is configured in the SNS topic and SQS queues, using AWS-mana
     * [SNS topic](https://docs.aws.amazon.com/sns/latest/dg/sns-server-side-encryption.html)
     * [SQS queue](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-server-side-encryption.html)
     * [Systems Manager parameter](https://docs.aws.amazon.com/kms/latest/developerguide/services-parameter-store.html).
+-->
 
 ## License
 
