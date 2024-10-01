@@ -5,7 +5,7 @@ This guidance automates the creation of DNS (Domain Name System) resolution conf
 ## Table of Contents
 
 1. [Overview](#overview)
-    - [Architecture](#architecture)
+    - [Architecture](#architecture-overview)
     - [AWS services used in this Guidance](#aws-services-used-in-this-guidance)
     - [Cost](#cost)
 2. [Prerequisites](#prerequisites)
@@ -38,14 +38,14 @@ This Guidance provides the following features:
     * Each spoke Account will use an [Amazon SNS](https://docs.aws.amazon.com/sns/latest/dg/welcome.html) topic to send information to a central Account [Amazon SQS](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/welcome.html) queue, so the onboarding automation will create the SNS subscription to the SQS queu.
 
 3. **Automation resources are built using Infrastructure-as-Code**.
-    * [Hashicorp Terraform](https://www.terraform.io/) is used for the guidance automated deployment.
-    * Given this automation is built for multi-Account environments, deployment steps are provided in the [Deploy the Guidance](#deploy-the-guidance) section.
+    * [Hashicorp Terraform](https://www.terraform.io/) is used for the guidance automated code deployment.
+    * Given this automation is built for multi-account environments, detailed deployment steps are provided in the [Deploy the Guidance](#deploy-the-guidance) section.
 
 ### Use cases
 
-While VPC Lattice can be used in a single Account, the most common use case is the use of the service in multi-Account environments. With VPC Lattice, two are the main resources to be used: the [VPC Lattice service network](https://docs.aws.amazon.com/vpc-lattice/latest/ug/service-networks.html) is the logical boundary that connects consumers and producers, and the [VPC Lattice service](https://docs.aws.amazon.com/vpc-lattice/latest/ug/services.html) is the independently deployable unit of software that delivers a task or function (the application). The multi-Account model for VPC Lattice can vary depending your use case, and any model you use can work with the use of this guidance. You can find more information about the different multi-Account architecture models can be found in the following [Reference Architecture](https://docs.aws.amazon.com/architecture-diagrams/latest/amazon-vpc-lattice-use-cases/amazon-vpc-lattice-use-cases.html){:target="_blank"}.
+While VPC Lattice can be used in a single Account, the most common use case is the use of the service in multi-Account environments. With VPC Lattice, two are the main resources to be used: the [VPC Lattice service network](https://docs.aws.amazon.com/vpc-lattice/latest/ug/service-networks.html) is the logical boundary that connects consumers and producers, and the [VPC Lattice service](https://docs.aws.amazon.com/vpc-lattice/latest/ug/services.html) is the independently deployable unit of software that delivers a task or function (the application). The multi-Account model for VPC Lattice can vary depending your use case, and any model you use can work with the use of this guidance. You can find more information about the different multi-Account architecture models can be found in the following [Reference Architecture](https://docs.aws.amazon.com/architecture-diagrams/latest/amazon-vpc-lattice-use-cases/amazon-vpc-lattice-use-cases.html).
 
-This guidance supposes a centralized model in terms of the DNS resolution.
+This guidance assumes a centralized model in terms of the DNS resolution.
 
 * A central Networking Account is the one owning all the DNS configuration, sharing it with the rest of the AWS Accounts.
 * The rest of the spoke Accounts consume this DNS configuration shared by the Networking Account, so resources can resolve the services' custom domain names to the VPC Lattice-generated domain name (the consumer services *can know* the service they want to consume needs to be done via VPC Lattice).
@@ -63,7 +63,7 @@ Below is the architecture diagram workflow of the Guidance for VPC Lattice autom
 Figure 1. VPC Lattice automated DNS configuration on AWS - Reference Architecture
 </div>
 
-The workflow is divided in two parts:
+The architecure workflow is divided in two parts:
 
 * **'Spoke' Account onboarding**. This is executed only once, as the SNS topic created (sending the VPC Lattice service information to the Networking Account) needs to be subscribed to the SQS queue in the Networking Account.
     * (**1**) An [Amazon EventBridge rule](https://aws.amazon.com/eventbridge/) checks if a new SNS topic has been created (it checks for the tag *NewSNS = true*). If so, the event is sent to the Networking Account via a custom event bus, notifying about the topic creation. In the Networking Account, events pushed into the custom event bus are processed by an [AWS Lambda](https://aws.amazon.com/lambda/) function, creating the cross-account subscription of the SNS topic to the SQS queue.
@@ -71,7 +71,7 @@ The workflow is divided in two parts:
     * (**2**) An EventBridge rule checks the tag in a new VPC Lattice service (*NewService = true*) and invokes a Lambda function which will obtain the DNS information of the VPC Lattice service and publish it to the SNS topic.
     * (**3**) Once the DNS information of the VPC Lattice service arrives to the SQS queue, a Lambda fuction is called to update the information in the Route 53 Private Hosted Zone.
 
-### AWS services used in this Guidance
+### AWS Services used in this Guidance
 
 | **AWS service**  | Role | Description | Service Availability |
 |-----------|------------|-------------|-------------|
@@ -84,7 +84,7 @@ The workflow is divided in two parts:
 
 ### Cost 
 
-You are responsible for the cost of the AWS services used while running this solution guidance. As of August 2024, the cost of running this Guidance Solution with default settings lies within the Free Tier, except for the use of AWS Systems Manager Advanced Paramter storage.
+You are responsible for the cost of the AWS services deployed while running this guidance. As of August 2024, the cost of running this Guidance with default settings lies within the Free Tier, except for the use of AWS Systems Manager Advanced Paramter storage.
 
 We recommend creating a [budget](https://docs.aws.amazon.com/cost-management/latest/userguide/budgets-create.html) through [AWS Cost Explorer](http://aws.amazon.com/aws-cost-management/aws-cost-explorer/) to help manage costs. Prices are subject to change. You can also estimate the cost for your architecture solution using [AWS Pricing Calculator](https://calculator.aws/#/). For full details, refer to the pricing webpage for each AWS service used in this Guidance or visit [Pricing by AWS Service](#pricing-by-aws-service).
 
@@ -102,7 +102,7 @@ This breakdown of the costs of the Networking Account shows that the highest cos
 
 **Estimated monthly cost breakdown - Spoke Accounts**
 
-The following table provides a sample cost breakdown for deploying this Guidance Solution in 1,000 different spoke Accounts which are likely to provide a VPC Lattice service in the future. The costs are estimated in the Ireland `eu-west-1` region for one month.
+The following table provides a sample cost breakdown for deploying this Guidance in 1,000 different spoke Accounts which are likely to provide a VPC Lattice service in the future. The costs are estimated in the Ireland `eu-west-1` region for one month.
 
 | **AWS service**  | Dimensions | Cost, month \[USD\] |
 |-----------|------------|------------|
@@ -130,16 +130,16 @@ Bellow are the pricing references for each AWS Service used in this Guidance.
 
 ### Operating System
 
-This Guidance Solution uses [AWS Serverless](https://aws.amazon.com/serverless/) managed services, so there's no OS patching or management. The Lambda functions are using [Python](https://docs.python.org/3/reference/index.html), and all the code was tested using Python `3.12`.
+This Guidance uses [AWS Serverless](https://aws.amazon.com/serverless/) managed services, so there's no OS patching or management. The Lambda functions are using [Python](https://docs.python.org/3/reference/index.html), and all the code was tested using `Python 3.12`.
 
 ### Third-party tools
 
 This solution uses [Terraform](https://www.terraform.io/) as an Infrastructure-as-Code provider. You will need Terraform installed to deploy. These instructions were tested with Terraform version `1.9.3`. You can install Terraform following [Hashicorp's documentation](https://developer.hashicorp.com/terraform/tutorials/aws-get-started/install-cli).
 
-For each Account deployment (under the [deployment](./deployment/) folder), you will find the following HCL config files:
+For each AWS Account deployment (under the [deployment](https://github.com/aws-solutions-library-samples/guidance-for-vpc-lattice-automated-dns-configuration-on-aws/tree/main/deployment) folder), you will find the following HCL config files:
 
 * *providers.tf* file provides the Terraform and [AWS provider](https://registry.terraform.io/providers/hashicorp/aws/latest/docs) version to use.
-* *main.tf* and *iam.tf* provides the resources' configuration. While *main.tf* holds the configuration of the different services, *iam.tf* holds the configuration of IAM roles and policies.
+* *main.tf* and *iam.tf* provide the resources' configuration. While *main.tf* holds the configuration of the different services, *iam.tf* holds the configuration of IAM roles and policies.
 * *variables.tf* defines the input each deployment requirements. Below in the [Deploy the Guidance](#deploy-the-guidance) section, you will see which input variables are required in each AWS Account.
 
 ```bash
@@ -152,7 +152,7 @@ iam.tf
 outputs.tf
 variables.tf
 ```
-Sample contents of `variables/tf` source file:
+Sample contents of `variables/tf` source file is below:
 
 ```bash
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
@@ -179,7 +179,7 @@ These instructions require AWS credentials configured according to the [Terrafor
 
 The credentials must have **IAM permission to create and update resources in the Account** - these persmissions will vary depending the Account type (*networking* or *spoke*). 
 
-In addition, the Guidance Solution supposes your Accounts are part of the same [AWS Organization](https://aws.amazon.com/organizations/) - as IAM policies restrict cross-Account actions between Accounts within the same Organization. For RAM share to work, you need to [enable resource sharing with the Organization](https://docs.aws.amazon.com/ram/latest/userguide/getting-started-sharing.html#getting-started-sharing-orgs).
+In addition, the Guidance supposes your Accounts are part of the same [AWS Organization](https://aws.amazon.com/organizations/) - as IAM policies restrict cross-Account actions between Accounts within the same Organization. For RAM share to work, you need to [enable resource sharing with the Organization](https://docs.aws.amazon.com/ram/latest/userguide/getting-started-sharing.html#getting-started-sharing-orgs).
 
 ### Service quotas
 
