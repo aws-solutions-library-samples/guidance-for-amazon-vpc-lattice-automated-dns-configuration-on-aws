@@ -14,23 +14,47 @@ This guidance automates the creation of DNS (Domain Name System) resolution conf
     - [AWS Account requirements](#aws-account-requirements)
     - [Service quotas](#service-quotas)
 3. [Deploy the Guidance](#deploy-the-guidance)
-4. [Uninstall the Guidance](#uninstall-the-guidance)
-5. [Security](#security)
+4. [Security](#security)
     - [Encryption at rest](#encryption-at-rest)
 5. [License](#license)
 6. [Contributing](#contributing)
 
 ## Overview
 
-Amazon VPC Lattice is an application networking service that simplifies the connectivity, monitoring, and security between your services. Its main benefits are the configuration and management simplification, allowing developers to focus on building features while Networking & Security administrators can provide guardrails in the services’ communication. The service simplifies the onboarding experience for developers by removing the need to implement custom application code, or run additional proxies next to every workload, while maintaining the tools and controls network admins require to audit and secure their environment. VPC Lattice leverages DNS for service discovery, so each VPC Lattice service is easily identifiable through its service-managed or custom domain names. However, for custom domain names, extra manual configuration is needed to allow DNS resolution for the consumer workloads.
+Amazon VPC Lattice is an application networking service that simplifies connectivity, monitoring, and security between your services. Its main benefits are the configuration and management simplification, allowing developers to focus on building features while Networking & Security administrators can provide guardrails in the services’ communication. The service simplifies the onboarding experience for developers by removing the need to implement custom application code, or run additional proxies next to every workload, while maintaining the tools and controls network admins require to audit and secure their environment. VPC Lattice leverages DNS for service discovery, so each VPC Lattice service is easily identifiable through its service-managed or custom domain names. However, for custom domain names, extra manual configuration is needed to allow DNS resolution for the consumer workloads.
 
-This Guidance Solution automate the configuration of DNS resolution anytime a new VPC Lattice service (with a custom domain name configured) is created. 
+This guidance automates the configuration of DNS resolution anytime a new VPC Lattice service (with a custom domain name configured) is created. For more information about how the guidance is implemented, check the [Implementation Guide](TBA).
 
-For more information about the Guidance Solution implementation, check the [Implementation Guide](TBA).
+### Features and benefits 
 
-### Architecture
+This Guidance provides the following features:
 
-Below is the diagram workflow of the Guidance for VPC Lattice automated DNS configuration on AWS. 
+1. **Seamless service discovery with VPC Lattice when using custom domain names**. 
+    * All the DNS resolution is configured in the Private Hosted Zone you desire.
+    * Anytime a VPC Lattice service is created in any AWS Account, its DNS configuration (custom and service-managed domain names) is sent to the AWS Account managing the DNS configuration. This messages are processed by creating an [Alias record](https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/resource-record-sets-choosing-alias-non-alias.html).
+
+2. **Seamless AWS Account onboarding**.
+    * When new Accounts that create VPC Lattice services (*spoke* Account) are needed to be onboarded (to the *central* Account), this guidance provides an automation for the onboarding process.
+    * Each spoke Account will use an [Amazon SNS](https://docs.aws.amazon.com/sns/latest/dg/welcome.html) topic to send information to a central Account [Amazon SQS](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/welcome.html) queue, so the onboarding automation will create the SNS subscription to the SQS queu.
+
+3. **Automation resources are built using Infrastructure-as-Code**.
+    * [Hashicorp Terraform](https://www.terraform.io/) is used for the guidance automated deployment.
+    * Given this automation is built for multi-Account environments, deployment steps are provided in the [Deploy the Guidance](#deploy-the-guidance) section.
+
+### Use cases
+
+While VPC Lattice can be used in a single Account, the most common use case is the use of the service in multi-Account environments. With VPC Lattice, two are the main resources to be used: the [VPC Lattice service network](https://docs.aws.amazon.com/vpc-lattice/latest/ug/service-networks.html) is the logical boundary that connects consumers and producers, and the [VPC Lattice service](https://docs.aws.amazon.com/vpc-lattice/latest/ug/services.html) is the independently deployable unit of software that delivers a task or function (the application). The multi-Account model for VPC Lattice can vary depending your use case, and any model you use can work with the use of this guidance. You can find more information about the different multi-Account architecture models can be found in the following [Reference Architecture](https://docs.aws.amazon.com/architecture-diagrams/latest/amazon-vpc-lattice-use-cases/amazon-vpc-lattice-use-cases.html){:target="_blank"}.
+
+This guidance supposes a centralized model in terms of the DNS resolution.
+
+* A central Networking Account is the one owning all the DNS configuration, sharing it with the rest of the AWS Accounts.
+* The rest of the spoke Accounts consume this DNS configuration shared by the Networking Account, so resources can resolve the services' custom domain names to the VPC Lattice-generated domain name (the consumer services *can know* the service they want to consume needs to be done via VPC Lattice).
+
+The guidance is configured to create the DNS resolution using [Route 53 Private Hosted Zones](https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/hosted-zones-private.html). The automation does not create any Private Hosted Zone, nor its association to the VPCs that need to consume the DNS configuration. For this association, we recommend the use of [Route 53 Profiles](https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/profiles.html).
+
+### Architecture overview
+
+Below is the architecture diagram workflow of the Guidance for VPC Lattice automated DNS configuration on AWS. 
 
 <div align="center">
 
@@ -41,7 +65,7 @@ Figure 1. VPC Lattice automated DNS configuration on AWS - Reference Architectur
 
 The workflow is divided in two parts:
 
-* **Spoke Account onboarding**. This is executed only once, as the SNS topic created (sending the VPC Lattice service information to the Networking Account) needs to be subscribed to the SQS queue in the Networking Account.
+* **'Spoke' Account onboarding**. This is executed only once, as the SNS topic created (sending the VPC Lattice service information to the Networking Account) needs to be subscribed to the SQS queue in the Networking Account.
     * (**1**) An [Amazon EventBridge rule](https://aws.amazon.com/eventbridge/) checks if a new SNS topic has been created (it checks for the tag *NewSNS = true*). If so, the event is sent to the Networking Account via a custom event bus, notifying about the topic creation. In the Networking Account, events pushed into the custom event bus are processed by an [AWS Lambda](https://aws.amazon.com/lambda/) function, creating the cross-account subscription of the SNS topic to the SQS queue.
 * **Creation of Alias records when new VPC Lattice services are created**. Anytime a new VPC Lattice service gets created in an onboarded spoke Account, its DNS information is sent to the networking Account so an Alias record can be created.
     * (**2**) An EventBridge rule checks the tag in a new VPC Lattice service (*NewService = true*) and invokes a Lambda function which will obtain the DNS information of the VPC Lattice service and publish it to the SNS topic.
@@ -66,15 +90,15 @@ We recommend creating a [budget](https://docs.aws.amazon.com/cost-management/la
 
 **Estimated monthly cost breakdown - Networking Account**
 
-This breakdown of the costs of the Networking Account shows that the highest cost of the automation implementation is the Advanced Parameter Storage resource from AWS Systems Manager service. The costs are estimated in the Ireland `eu-west-1` region for one month.
+This breakdown of the costs of the Networking Account shows that the highest cost of the automation implementation is the [Advanced Parameter Storage](https://docs.aws.amazon.com/systems-manager/latest/userguide/parameter-store-advanced-parameters.html) resource from AWS Systems Manager service. The costs are estimated for US East 1 (Virginia) `us-east-1` region for one month.
 
 | **AWS service**  | Dimensions | Cost, month \[USD\] |
 |-----------|------------|------------|
 | AWS Systems Manager  | 1 advanced parameters | \$ 0.05 |
-| Amazon EventBridge  | < 1 million custom events | \$ 0.00 |
+| Amazon EventBridge  | <= 1 million custom events | \$ 1.00 |
 | AWS Lambda  | < 1 million requests & 400,000 GB-seconds of compute time | \$ 0.00 |
 | Amazon SQS | < 1 million requests| \$ 0.00 | 
-| **TOTAL estimate** |  | **\$ 0.05** |
+| **TOTAL estimate** |  | **\$ 1.05/month** |
 
 **Estimated monthly cost breakdown - Spoke Accounts**
 
@@ -82,15 +106,17 @@ The following table provides a sample cost breakdown for deploying this Guidance
 
 | **AWS service**  | Dimensions | Cost, month \[USD\] |
 |-----------|------------|------------|
-| Amazon EventBridge  | < 1 million custom events | \$ 0.00 |
+| Amazon EventBridge  | <= 1 million custom events | \$ 1.00 |
 | AWS Lambda  | < 1 million requests & 400,000 GB-seconds of compute time | \$ 0.00 |
 | Amazon SNS  | < 1 million requests | \$ 0.00|
 | Amazon SQS | < 1 million requests| \$ 0.00 | 
-| **TOTAL estimate** |  | **\$ 0.00** |
+| **TOTAL estimate** |  | **\$ 1.00/month** |
+
+Please see price breakdown details in this [AWS calculator](https://calculator.aws/#/estimate?id=6ee067550372e1563469fded6e9f69d665113897)
 
 **Pricing by AWS Service**
 
-Bellow are the pricing references for each AWS Service used in this Guidance Solution.
+Bellow are the pricing references for each AWS Service used in this Guidance.
 
 | **AWS service**  |  Pricing  |
 |-----------|---------------|
@@ -104,7 +130,7 @@ Bellow are the pricing references for each AWS Service used in this Guidance Sol
 
 ### Operating System
 
-This Guidance Solution uses [AWS Serverless](https://aws.amazon.com/serverless/) managed services, so there's no OS patching or management. The Lambda functions are using Python, and all the code was tested using Python `3.12`.
+This Guidance Solution uses [AWS Serverless](https://aws.amazon.com/serverless/) managed services, so there's no OS patching or management. The Lambda functions are using [Python](https://docs.python.org/3/reference/index.html), and all the code was tested using Python `3.12`.
 
 ### Third-party tools
 
@@ -116,11 +142,42 @@ For each Account deployment (under the [deployment](./deployment/) folder), you 
 * *main.tf* and *iam.tf* provides the resources' configuration. While *main.tf* holds the configuration of the different services, *iam.tf* holds the configuration of IAM roles and policies.
 * *variables.tf* defines the input each deployment requirements. Below in the [Deploy the Guidance](#deploy-the-guidance) section, you will see which input variables are required in each AWS Account.
 
+```bash
+bash-3.2$ cd guidance-for-vpc-lattice-automated-dns-configuration-on-aws/deployment/networking_account
+bash-3.2$ ls
+README.md
+main.tf
+providers.tf
+iam.tf
+outputs.tf
+variables.tf
+```
+Sample contents of `variables/tf` source file:
+
+```bash
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: MIT-0
+
+# ---------- automation/networking_account/variables.tf ----------
+
+variable "aws_region" {
+  description = "AWS Region to build the automation in the Networking AWS Account."
+  type        = string
+}
+
+variable "phz_id" {
+  description = "Amazon Route 53 Private Hosted Zone ID."
+  type        = string
+}
+```
+
 We use the local backend configuration to store the state files. We recommend the use of another backend configuration that provides you more consistent storage and versioning, for example the use of [Amazon S3 and Amazon DynamoDB](https://developer.hashicorp.com/terraform/language/settings/backends/s3).
 
 ### AWS account requirements
 
-These instructions require AWS credentials configured according to the [Terraform AWS Provider documentation](https://registry.terraform.io/providers/-/aws/latest/docs#authentication-and-configuration). The credentials must have IAM permission to create and update resources in the Account - these persmissions will vary depending the Account type (*networking* or *spoke*). 
+These instructions require AWS credentials configured according to the [Terraform AWS Provider documentation](https://registry.terraform.io/providers/-/aws/latest/docs#authentication-and-configuration). 
+
+The credentials must have **IAM permission to create and update resources in the Account** - these persmissions will vary depending the Account type (*networking* or *spoke*). 
 
 In addition, the Guidance Solution supposes your Accounts are part of the same [AWS Organization](https://aws.amazon.com/organizations/) - as IAM policies restrict cross-Account actions between Accounts within the same Organization. For RAM share to work, you need to [enable resource sharing with the Organization](https://docs.aws.amazon.com/ram/latest/userguide/getting-started-sharing.html#getting-started-sharing-orgs).
 
@@ -140,73 +197,6 @@ To view the service quotas for all AWS services in the documentation without swi
 **TO DO - REPLACE THE IG LINK BELOW WITH PRODUCTION VERSION**
 
 Please see the detailed Implementation Guide [here](https://implementationguides.kits.eventoutfitters.aws.dev/vpc-lattice-0716/networking/vpc-lattice-automated-dns-configuration.html)
-
-**TO DO RVIEW SECTIONS BELOW AND DECIDE WHETHER THEY NEED TO BE KEPT OR MOVED TO GITLAB BASED IG**
-
-<!--
-Below are the instructions to deploy the automation:
-
-* **Step 1: Networking AWS Account**.
-    * *Variables needed*: AWS Region to deploy the resources, and Private Hosted ID to create the Alias records.
-    * Locate yourself in the [network_account](./deployment/networking_account/) folder and configure the AWS credentials of your Networking Account.
-
-```
-cd deployment/networking_account
-(configure AWS credentials)
-terraform init
-terraform apply
-```
-
-* **Step 2: Spoke AWS Account**. Follow this process for each spoke Account in which you are creating VPC Lattice services.
-    * *Variables needed*: AWS Region to deploy the resources, and Networking Account ID.
-    * Locate yourself in the [spoke_account](./deployment/networking_account/) folder and configure the AWS credentials of your Spoke Account.
-
-```
-cd deployment/spoke_account
-(configure AWS credentials)
-terraform init
-terraform apply
-```
-
-You will find a [test environment](./test/) if you want to check and test an end-to-end implementation using the solution.
-
-## Uninstall the Guidance
-
-* **Step 1.** In the Networking Account, remove all the SNS subscriptions to the SQS queue, and Alias records created in the Private Hosted Zone.
-* **Step 2.** In each Spoke Account that you want to offboard, delete the Guidance Solution automation.
-
-```
-cd deployment/spoke_account
-(configure AWS credentials)
-terraform destroy
-```
-
-* **Step 3.** In Networking AWS Account, delete the Guidance Solution automation.
-
-```
-cd deployment/networking_account
-(configure AWS credentials)
-terraform destroy
-```
-
-## Security
-
-When you build systems on AWS infrastructure, security responsibilities are shared between you and AWS. This [shared responsibility model](https://aws.amazon.com/compliance/shared-responsibility-model/) reduces your operational burden because AWS operates, manages, and controls the components including the host operating system, the virtualization layer, and the physical security of the facilities in which the services operate. For more information about AWS security visit [AWS Cloud Security](http://aws.amazon.com/security/).
-
-This guidance relies on a lot of reasonable default options and "principle of least privilege" access for all resources. Users that deploy it in production should go through all the deployed resources and ensure those defaults comply with their security requirements and policies, have adequate logging levels and alarms enabled and protect access to publicly exposed APIs. In SQS and SNS, the Resource Policies are defined such that only the specified account/organization/resource can access such resource. IAM Roles are defined for AWS Lambda to only access the corresponding resources such as EventBridge, SQS and SNS. AWS RAM securely shares resource parameter such as SQS queue ARN and Eventbridge custom event bus ARN. This limits the access to the VPC Lattice DNS resolution automation to the configuration resources and involved accounts only.
-
-**NOTE**: Please note that by cloning and using 3rd party open-source code you assume responsibility for its patching/securing/managing in the context of this project.
-
-### Encryption at rest
-
-Encryption at rest is configured in the SNS topic and SQS queues, using AWS-managed keys. Systems Manager parameters are not configured as `SecureString` due they must be encrypted with a customer managed key, and you must share the key separately through [AWS Key Management Service](https://aws.amazon.com/kms/) (KMS).
-
-* Given its sensitivity, we are not creating any KMS resource in this Guidance Solution.
-* If you would like to use customer managed keys to encrypt at rest the data of all these services, you will to change the code to configure this option in the corresponding resources: 
-    * [SNS topic](https://docs.aws.amazon.com/sns/latest/dg/sns-server-side-encryption.html)
-    * [SQS queue](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-server-side-encryption.html)
-    * [Systems Manager parameter](https://docs.aws.amazon.com/kms/latest/developerguide/services-parameter-store.html).
--->
 
 ## License
 
