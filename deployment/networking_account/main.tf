@@ -161,7 +161,7 @@ resource "aws_cloudformation_stack" "guidance_deployment_metrics" {
   template_body = <<STACK
     {
         "AWSTemplateFormatVersion": "2010-09-09",
-        "Description": "Guidance for VPC Lattice automated DNS configuration on AWS (SXXXXX)",
+        "Description": "Guidance for VPC Lattice automated DNS configuration on AWS (SO9532)",
         "Resources": {
             "EmptyResource": {
                 "Type": "AWS::CloudFormation::WaitConditionHandle"
