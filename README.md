@@ -59,7 +59,6 @@ Below is the Reference architecture diagram and workflow of the Guidance for VPC
 <div align="center">
 
 ![picture](./assets/amazon-vpc-lattice-automated-dns-configuration-on-aws.png)
-
 Figure 1. VPC Lattice automated DNS configuration on AWS - Reference Architecture
 </div>
 
@@ -68,7 +67,7 @@ The architecure workflow is divided in two parts:
 * **'Spoke' Account onboarding**. This is executed only once, as the SNS topic created (sending the VPC Lattice service information to the Networking Account) needs to be subscribed to the SQS queue in the Networking Account.
     * (**1**) <!--An [Amazon EventBridge rule](https://aws.amazon.com/eventbridge/) checks if a new SNS topic has been created (it checks for the tag *NewSNS = true*). If so, the event is sent to the Networking Account via a custom event bus, notifying about the topic creation. In the Networking Account, events pushed into the custom event bus are processed by an [AWS Lambda](https://aws.amazon.com/lambda/) function, creating the cross-account subscription of the SNS topic to the SQS queue.-->
       When a new Spoke account deploys automation resources, an [Amazon EventBridge](https://aws-preview.aka.amazon.com/eventbridge/) rule checks that a new [Amazon Simple Notification Service (Amazon SNS)](https://aws-preview.aka.amazon.com/sns/) topic has been created with the proper tag.
-* **Creation of Alias records when new VPC Lattice services are created**. Anytime a new VPC Lattice service gets created in an onboarded spoke Account, its DNS information is sent to the networking Account so an Alias record can be created.
+* **Creation of DNS Alias records when new VPC Lattice services are created**. Anytime a new VPC Lattice service gets created in an onboarded spoke Account, its DNS information is sent to the networking Account so an Alias record can be created.
     * (**2**) <!-- An EventBridge rule checks the tag in a new VPC Lattice service (*NewService = true*) and invokes a Lambda function which will obtain the DNS information of the VPC Lattice service and publish it to the SNS topic.-->
 The New SNS topic EventBridge rule in the spoke account sends the event to the networking account using a [custom event bus](https://docs.aws.amazon.com/eventbridge/latest/userguide/eb-create-event-bus.html) to notify the creation of a new [SNS topic](https://docs.aws.amazon.com/sns/latest/dg/sns-create-topic.html).
     * (**3**) <!-- Once the DNS information of the VPC Lattice service arrives to the SQS queue, a Lambda fuction is called to update the information in the Route 53 Private Hosted Zone.-->
