@@ -13,9 +13,9 @@ This guidance automates the creation of DNS (Domain Name System) resolution conf
     - [Third-party tools](#third-party-tools)
     - [AWS Account requirements](#aws-account-requirements)
     - [Service quotas](#service-quotas)
-3. [Deploy the Guidance](#deploy-the-guidance)
-4. [Security](#security)
+3. [Security](#security)
     - [Encryption at rest](#encryption-at-rest)
+4. [Deploy the Guidance](#deploy-the-guidance)
 5. [License](#license)
 6. [Contributing](#contributing)
 
@@ -196,6 +196,24 @@ In addition, the Guidance supposes your Accounts are part of the same [AWS Organ
 Make sure you have sufficient quota for each of the services implemented in this solution. For more information, see [AWS service quotas](https://docs.aws.amazon.com/general/latest/gr/aws_service_limits.html).
 
 To view the service quotas for all AWS services in the documentation without switching pages, view the information in the [Service endpoints and quotas](https://docs.aws.amazon.com/general/latest/gr/aws-general.pdf#aws-service-information) page in the PDF instead.
+
+## Security
+
+When you build systems on AWS infrastructure, security responsibilities are shared between you and AWS. This [shared responsibility model](https://aws.amazon.com/compliance/shared-responsibility-model/) reduces your operational burden because AWS operates, manages, and controls the components including the host operating system, the virtualization layer, and the physical security of the facilities in which the services operate. For more information about AWS security visit [AWS Cloud Security](http://aws.amazon.com/security/).
+
+This guidance relies on many reasonable default options and "principle of least privilege" access for all resources. Users that deploy it in production should go through all the deployed resources and ensure those defaults comply with their security requirements and policies, have adequate logging levels and alarms enabled, and protect access to publicly exposed APIs. In Amazon SQS and Amazon SNS, the resource policies are defined such that only the specified account, organization, or resource can access such resource. IAM roles are defined for Lambda to only access the corresponding resources such as EventBridge, Amazon SQS, and Amazon SNS. AWS RAM securely shares resource parameter such as SQS queue ARN and EventBridge custom event bus ARN. This limits the access to the Amazon VPC Lattice DNS resolution automation to the configuration resources and involved accounts only.
+
+**NOTE**: Please note that by cloning and using third party open-source code, you assume responsibility for its patching, securing, and managing in the context of this project.
+
+### Encryption at rest
+
+Encryption at rest is configured in the SNS topic and SQS queues, using AWS-managed keys. Systems Manager parameters are not configured as `SecureString` due to the fact that they must be encrypted with a customer managed key, and you must share the key separately through AWS Key Management Service (AWS KMS).
+
+* Given its sensitivity, we are not creating any AWS KMS resource in this guidance.
+* If you would like to use customer managed keys to encrypt at rest the data of all these services, you will need to change the code to configure this option in the corresponding resources: 
+    * [SNS topic](https://docs.aws.amazon.com/sns/latest/dg/sns-server-side-encryption.html)
+    * [SQS queue](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-server-side-encryption.html)
+    * [Systems Manager parameter](https://docs.aws.amazon.com/kms/latest/developerguide/services-parameter-store.html).
 
 ## Deploy the Guidance 
 
