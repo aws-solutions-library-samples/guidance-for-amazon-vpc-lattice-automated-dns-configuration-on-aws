@@ -23,7 +23,7 @@ This guidance automates the creation of DNS (Domain Name System) resolution conf
 
 [Amazon VPC Lattice](https://aws.amazon.com/vpc/lattice/) is an application networking service that simplifies connectivity, monitoring, and security between your services. Its main benefits are the configuration and management simplification, allowing developers to focus on building features while Networking & Security administrators can provide guardrails in the services’ communication. The service simplifies the onboarding experience for developers by removing the need to implement custom application code, or run additional proxies next to every workload, while maintaining the tools and controls network admins require to audit and secure their environment. VPC Lattice leverages [Domain Name System (DNS)](https://aws.amazon.com/route53/what-is-dns/) for service discovery, so each VPC Lattice service is easily identifiable through its service-managed or custom domain names. However, for custom domain names, extra manual configuration is needed to allow DNS resolution for the consumer workloads.
 
-This guidance automates the configuration of DNS resolution anytime a new VPC Lattice service (with a custom domain name configured) is created. For more information about how the guidance is implemented, check the [Implementation Guide](TBA).
+This guidance automates the configuration of DNS resolution anytime a new VPC Lattice service (with a custom domain name configured) is created. For more information about how the guidance is implemented, check the [Implementation Guide](https://aws-solutions-library-samples.github.io/networking/amazon-vpc-lattice-automated-dns-configuration-on-aws.html).
 
 ### Features and benefits 
 
@@ -64,7 +64,7 @@ Figure 1. VPC Lattice automated DNS configuration on AWS - Reference Architectur
 
 The architecure workflow is divided in two parts:
 
-* **'Spoke' Account onboarding**. This is executed only once, as the SNS topic created (sending the VPC Lattice service information to the Networking Account) needs to be subscribed to the SQS queue in the Networking Account.
+* **Spoke Account onboarding**. This is executed only once, as the SNS topic created (sending the VPC Lattice service information to the Networking Account) needs to be subscribed to the SQS queue in the Networking Account.
     * (**1**) <!--An [Amazon EventBridge rule](https://aws.amazon.com/eventbridge/) checks if a new SNS topic has been created (it checks for the tag *NewSNS = true*). If so, the event is sent to the Networking Account via a custom event bus, notifying about the topic creation. In the Networking Account, events pushed into the custom event bus are processed by an [AWS Lambda](https://aws.amazon.com/lambda/) function, creating the cross-account subscription of the SNS topic to the SQS queue.-->
       When a new Spoke account deploys automation resources, an [Amazon EventBridge](https://aws.amazon.com/eventbridge/) rule checks that a new [Amazon Simple Notification Service (Amazon SNS)](https://aws.amazon.com/sns/) topic has been created with the proper tag.
 * **Creation of DNS Alias records when new VPC Lattice services are created**. Anytime a new VPC Lattice service gets created in an onboarded spoke Account, its DNS information is sent to the networking Account so an Alias record can be created.
@@ -100,11 +100,11 @@ We recommend creating a [budget](https://docs.aws.amazon.com/cost-management/la
 
 **Estimated monthly cost breakdown - Networking Account**
 
-This breakdown of the costs of the Networking Account shows that the highest cost of the automation implementation is the [Advanced Parameter Storage](https://docs.aws.amazon.com/systems-manager/latest/userguide/parameter-store-advanced-parameters.html) resource from AWS Systems Manager service. The costs are estimated for US East 1 (Virginia) `us-east-1` region for one month.
+This breakdown of the costs of the Networking Account shows that the highest cost of the implementation is the [Advanced Parameter Storage](https://docs.aws.amazon.com/systems-manager/latest/userguide/parameter-store-advanced-parameters.html) resource from AWS Systems Manager service. The costs are estimated for US East 1 (Virginia) `us-east-1` region for one month.
 
 | **AWS service**  | Dimensions | Cost, month \[USD\] |
 |-----------|------------|------------|
-| AWS Systems Manager  | 1 advanced parameters | \$ 0.05 |
+| AWS Systems Manager  | 1 advanced parameter | \$ 0.05 |
 | Amazon EventBridge  | <= 1 million custom events | \$ 1.00 |
 | AWS Lambda  | < 1 million requests & 400,000 GB-seconds of compute time | \$ 0.00 |
 | Amazon SQS | < 1 million requests| \$ 0.00 | 
@@ -222,11 +222,8 @@ Encryption at rest is configured in the SNS topic and SQS queues, using AWS-mana
 | Networking       | 3                           | 
 | Spoke            | 2                           |
 
-<!--
-**TO DO - REPLACE THE IG LINK BELOW WITH PRODUCTION VERSION**
 
-Please see the detailed Implementation Guide [here](https://implementationguides.kits.eventoutfitters.aws.dev/vpc-lattice-0716/networking/vpc-lattice-automated-dns-configuration.html)
--->
+Please see the detailed Implementation Guide [here](https://aws-solutions-library-samples.github.io/networking/amazon-vpc-lattice-automated-dns-configuration-on-aws.html) for step-by-step deployment instructions. 
 
 ## License
 
