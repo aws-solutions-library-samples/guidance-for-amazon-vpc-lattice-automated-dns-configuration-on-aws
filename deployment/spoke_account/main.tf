@@ -4,8 +4,6 @@
 # ---------- automation/spoke_account/main.tf ----------
 
 # --------- DATA SOURCES -----------
-# Organization ID
-data "aws_organizations_organization" "org" {}
 # AWS Account ID 
 data "aws_caller_identity" "account" {}
 
@@ -18,71 +16,10 @@ locals {
   networking_resources = jsondecode(data.aws_ssm_parameter.networking_resources.value)
 }
 
-# ---------- SNS TOPIC ----------
-resource "aws_sns_topic" "new_vpc_lattice_service" {
-  name              = "New-VPCLattice-Service"
-  kms_master_key_id = "alias/aws/sns"
-}
-
-# Lambda function used to tag the SNS Topic (and generate an EventBridge event)
-data "archive_file" "tag_sns" {
-  type        = "zip"
-  source_file = "${path.module}/../lambda_functions/tag_sns.py"
-  output_path = "${path.module}/../lambda_functions/tag_sns.zip"
-}
-
-resource "aws_lambda_function" "tag_sns" {
-  filename         = "${path.module}/../lambda_functions/tag_sns.zip"
-  function_name    = "tag_sns"
-  role             = aws_iam_role.lambda_role.arn
-  handler          = "tag_sns.lambda_handler"
-  source_code_hash = data.archive_file.tag_sns.output_base64sha256
-  runtime          = "python3.12"
-
-  environment {
-    variables = {
-      SNS_TOPIC = aws_sns_topic.new_vpc_lattice_service.arn
-    }
-  }
-}
-
-resource "aws_lambda_invocation" "tagsns_invocation" {
-  function_name = aws_lambda_function.tag_sns.function_name
-  input         = ""
-
-  depends_on = [aws_cloudwatch_event_target.my_busevent_target]
-}
-
-# ---------- ONBOARDING SNS TOPICS TO NETWORKING SQS QUEUE ----------
+# ---------- CATCHING NEW VPC LATTICE SERVICES AND SENDING INFORMATION TO STEP FUNCTIONS ----------
 # EventBridge rule
-resource "aws_cloudwatch_event_rule" "detect_new_sns_topic" {
-  name        = "NewSNSTopic"
-  description = "Captures creation of new SNS Topics to be onboarded to the Networking SQS queue."
-
-  event_pattern = <<PATTERN
-  {
-    "source": ["aws.tag"],
-    "detail-type": ["Tag Change on Resource"],
-    "detail": {
-      "changed-tag-keys": ["NewSNS"],
-      "service": ["sns"]
-    }
-  }
-PATTERN
-}
-
-# Target EventBrige event bus (Networking Account) from rule
-resource "aws_cloudwatch_event_target" "my_busevent_target" {
-  rule      = aws_cloudwatch_event_rule.detect_new_sns_topic.name
-  target_id = "SendToEventBus"
-  arn       = local.networking_resources.eventbus_arn
-  role_arn  = aws_iam_role.eventrule_role.arn
-}
-
-# ---------- CATCHING NEW VPC LATTICE SERVICES AND NOTIFYING NETWORKING ACCOUNT ----------
-# EventBridge rule
-resource "aws_cloudwatch_event_rule" "eventbridge_rule_new_vpclattice_service" {
-  name          = "new_service_rule"
+resource "aws_cloudwatch_event_rule" "vpclattice_newservice_rule" {
+  name          = "vpclattice_newservice_rule"
   description   = "Captures changes in VPC Lattice service tags."
   event_pattern = <<E0F
     {
@@ -97,42 +34,161 @@ resource "aws_cloudwatch_event_rule" "eventbridge_rule_new_vpclattice_service" {
 E0F
 }
 
-# EventBridge target
-resource "aws_cloudwatch_event_target" "eventbridge_lambda_trigger" {
-  rule      = aws_cloudwatch_event_rule.eventbridge_rule_new_vpclattice_service.name
-  target_id = "SendToEventLambda"
-  arn       = aws_lambda_function.new_vpclattice_service.arn
+# Target Step Functions
+resource "aws_cloudwatch_event_target" "vpclattice_newservice_target" {
+  rule      = aws_cloudwatch_event_rule.vpclattice_newservice_rule.name
+  target_id = "SendToStepFunctions"
+  arn       = aws_sfn_state_machine.sfn_vpclattice.arn
+  role_arn  = aws_iam_role.eventrule_role.arn
 }
 
-# Permission: EventBridge to invoke Lambda function
-resource "aws_lambda_permission" "permission_eventbridge_lambda" {
-  statement_id  = "AllowExecutionFromEventBridge"
-  action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.new_vpclattice_service.function_name
-  principal     = "events.amazonaws.com"
-  source_arn    = aws_cloudwatch_event_rule.eventbridge_rule_new_vpclattice_service.arn
-}
+# ---------- STEP FUNCTIONS (OBTAINING VPC LATTICE INFORMATION) ----------
+resource "aws_sfn_state_machine" "sfn_vpclattice" {
+  name     = "vpclattice-information"
+  role_arn = aws_iam_role.sfn_role.arn
 
-# Lambda function (Obtaining DNS information from VPC Lattice service and publish to SNS topic)
-data "archive_file" "new_vpclattice_service" {
-  type        = "zip"
-  source_file = "${path.module}/../lambda_functions/event_curation.py"
-  output_path = "${path.module}/../lambda_functions/event_lambda.zip"
-}
-
-resource "aws_lambda_function" "new_vpclattice_service" {
-  filename         = "${path.module}/../lambda_functions/event_lambda.zip"
-  function_name    = "event_lambda"
-  role             = aws_iam_role.lambda_role.arn
-  handler          = "event_curation.lambda_handler"
-  source_code_hash = data.archive_file.new_vpclattice_service.output_base64sha256
-  runtime          = "python3.12"
-
-  environment {
-    variables = {
-      SNS_TOPIC = aws_sns_topic.new_vpc_lattice_service.arn
+  definition = <<EOF
+{
+  "Comment": "A description of my state machine",
+  "StartAt": "ActionType",
+  "States": {
+    "ActionType": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "And": [
+            {
+              "Variable": "$.detail.tags.NewService",
+              "IsPresent": true
+            },
+            {
+              "Variable": "$.detail.tags.NewService",
+              "StringEquals": "true"
+            }
+          ],
+          "Next": "GetService"
+        },
+        {
+          "Not": {
+            "Variable": "$.detail.tags.NewService",
+            "IsPresent": true
+          },
+          "Next": "PutEventServiceDeleted"
+        }
+      ],
+      "Default": "Pass"
+    },
+    "Pass": {
+      "Type": "Pass",
+      "End": true
+    },
+    "GetService": {
+      "Type": "Task",
+      "Parameters": {
+        "ServiceIdentifier.$": "$.resources[0]"
+      },
+      "Resource": "arn:aws:states:::aws-sdk:vpclattice:getService",
+      "ResultSelector": {
+        "ServiceInformation.$": "$"
+      },
+      "Next": "CustomDNSConfigured"
+    },
+    "CustomDNSConfigured": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.ServiceInformation.CustomDomainName",
+          "IsPresent": true,
+          "Next": "PutEventServiceCreated"
+        }
+      ],
+      "Default": "Pass"
+    },
+    "PutEventServiceCreated": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:eventbridge:putEvents",
+      "Parameters": {
+        "Entries": [
+          {
+            "Detail.$": "$.ServiceInformation",
+            "DetailType": "ServiceCreated",
+            "EventBusName": "vpclattice_information",
+            "Source": "vpclattice_information"
+          }
+        ]
+      },
+      "End": true
+    },
+    "PutEventServiceDeleted": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::events:putEvents",
+      "Parameters": {
+        "Entries": [
+          {
+            "Detail": {
+              "ServiceArn.$": "$.resources[0]"
+            },
+            "DetailType": "ServiceDeleted",
+            "EventBusName": "vpclattice_information",
+            "Source": "vpclattice_information"
+          }
+        ]
+      },
+      "End": true
     }
   }
+}
+EOF
+
+  logging_configuration {
+    log_destination        = "${aws_cloudwatch_log_group.sfn_vpclattice_loggroup.arn}:*"
+    include_execution_data = true
+    level                  = "ERROR"
+  }
+}
+
+# ---------- EVENTBRIDGE BUS ----------
+# EventBridge event bus
+resource "aws_cloudwatch_event_bus" "vpclattice_information_eventbus" {
+  name = "vpclattice_information"
+}
+
+# EventBridge rule
+resource "aws_cloudwatch_event_rule" "vpclattice_information_rule" {
+  name           = "VpcLattice_Information"
+  description    = "Captures events send by Step Functions where VPC Lattice services' information is shared."
+  event_bus_name = aws_cloudwatch_event_bus.vpclattice_information_eventbus.name
+
+  event_pattern = <<PATTERN
+  {
+    "source": ["vpclattice_information"]
+  }
+PATTERN
+}
+
+# Target EventBrige event bus (Networking Account) from rule
+resource "aws_cloudwatch_event_target" "vpclattice_information_target" {
+  rule           = aws_cloudwatch_event_rule.vpclattice_information_rule.name
+  target_id      = "SendToCrossAccountEventBus"
+  arn            = local.networking_resources.eventbus_arn
+  event_bus_name = aws_cloudwatch_event_bus.vpclattice_information_eventbus.name
+  role_arn       = aws_iam_role.eventrule_role.arn
+
+  dead_letter_config {
+    arn = aws_sqs_queue.queue_deadletter.arn
+  }
+}
+
+# Dead-Letter queue
+resource "aws_sqs_queue" "queue_deadletter" {
+  name                    = "deadletter-queue"
+  sqs_managed_sse_enabled = true
+}
+
+# ---------- VISIBILITY: AMAZON CLOUDWATCH LOGS ----------
+# Step Functions state machine
+resource "aws_cloudwatch_log_group" "sfn_vpclattice_loggroup" {
+  name = "/aws/vendedlogs/states/"
 }
 
 #--------------------------------------------------------------

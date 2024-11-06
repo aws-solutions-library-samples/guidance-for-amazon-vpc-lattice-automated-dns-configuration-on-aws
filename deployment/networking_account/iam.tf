@@ -3,23 +3,9 @@
 
 # ---------- automation/networking_account/iam.tf ----------
 
-# ---------- LAMBDA FUNCTION ASSUME POLICY ----------
-data "aws_iam_policy_document" "assume_role" {
-  statement {
-    effect  = "Allow"
-    actions = ["sts:AssumeRole"]
-
-    principals {
-      type        = "Service"
-      identifiers = ["lambda.amazonaws.com"]
-    }
-  }
-}
-
-# ---------- ONBOARDING OF NEW SPOKE ACCOUNTS (SQS SUBSCRIPTION) ----------
-# Event Bus policy - Allowing Events send by the AWS Organization
+# ---------- EVENTBRIDGE EVENT BUS (CROSS-ACCOUNT INFORMATION SHARING) ----------
 resource "aws_cloudwatch_event_bus_policy" "allow_organization" {
-  event_bus_name = aws_cloudwatch_event_bus.new_sns_eventbus.name
+  event_bus_name = aws_cloudwatch_event_bus.cross_account_eventbus.name
 
   policy = data.aws_iam_policy_document.eventbus_policy.json
 }
@@ -28,7 +14,7 @@ data "aws_iam_policy_document" "eventbus_policy" {
   statement {
     sid       = "AllowOrgAccess"
     effect    = "Allow"
-    resources = ["${aws_cloudwatch_event_bus.new_sns_eventbus.arn}"]
+    resources = [aws_cloudwatch_event_bus.cross_account_eventbus.arn]
 
     principals {
       type        = "AWS"
@@ -43,117 +29,90 @@ data "aws_iam_policy_document" "eventbus_policy" {
     condition {
       test     = "StringEquals"
       variable = "aws:PrincipalOrgID"
-      values   = ["${data.aws_organizations_organization.org.id}"]
+      values   = [data.aws_organizations_organization.org.id]
     }
   }
 }
 
-# Lambda function policy (Allowing creating SQS subscriptions)
-resource "aws_iam_role" "subs_lambda_role" {
-  name               = "SubscriptionLambdaRole"
+# ---------- EVENTBRIDGE TARGET (PERMISSION TO INVOKE STEP FUNCTIONS) ----------
+# IAM Role
+resource "aws_iam_role" "event_target_role" {
+  name               = "EventTargetRole"
   path               = "/"
-  assume_role_policy = data.aws_iam_policy_document.assume_role.json
+  assume_role_policy = data.aws_iam_policy_document.assume_role_event_target.json
 }
 
-resource "aws_iam_role_policy_attachment" "subs_lambda_policy_attachment" {
-  role       = aws_iam_role.subs_lambda_role.name
-  policy_arn = aws_iam_policy.subs_lambda_policy.arn
-}
-
-resource "aws_iam_role_policy_attachment" "subs_lambda_managed_policy_attachment" {
-  role       = aws_iam_role.subs_lambda_role.name
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
-}
-
-resource "aws_iam_policy" "subs_lambda_policy" {
-  name        = "SubscriptionLambdaPolicy"
-  path        = "/"
-  description = "AWS Lambda permissions to subscribe SNS topics to an SQS queue."
-
-  policy = data.aws_iam_policy_document.subs_lambda_policy.json
-}
-
-data "aws_iam_policy_document" "subs_lambda_policy" {
+data "aws_iam_policy_document" "assume_role_event_target" {
   statement {
-    sid       = "AllowResourceRecordSet"
+    effect = "Allow"
+    principals {
+      type        = "Service"
+      identifiers = ["events.amazonaws.com"]
+    }
+    actions = ["sts:AssumeRole"]
+  }
+}
+
+# IAM policy
+resource "aws_iam_policy" "event_target_policy" {
+  name        = "EventTargetPolicy"
+  description = "Allowing Step Functions invocation."
+  policy      = data.aws_iam_policy_document.event_target_policy.json
+}
+
+data "aws_iam_policy_document" "event_target_policy" {
+  statement {
     effect    = "Allow"
-    actions   = ["sns:Subscribe"]
+    actions   = ["states:StartExecution"]
+    resources = [aws_sfn_state_machine.sfn_phz.arn]
+  }
+}
+
+resource "aws_iam_role_policy_attachment" "attach_event_target_policy" {
+  role       = aws_iam_role.event_target_role.name
+  policy_arn = aws_iam_policy.event_target_policy.arn
+}
+
+# ---------- STEP FUNCTIONS (UPDATING PRIVATE HOSTED ZONE RECORD) ----------
+# IAM Role
+resource "aws_iam_role" "sfn_role" {
+  name               = "StepFunctionsRole"
+  path               = "/"
+  assume_role_policy = data.aws_iam_policy_document.assume_role_sfn.json
+}
+
+data "aws_iam_policy_document" "assume_role_sfn" {
+  statement {
+    effect = "Allow"
+    principals {
+      type        = "Service"
+      identifiers = ["states.amazonaws.com"]
+    }
+    actions = ["sts:AssumeRole"]
+  }
+}
+
+# IAM policy
+resource "aws_iam_policy" "sfn_policy" {
+  name        = "StepFunctionsPolicy"
+  description = "Allowing Step Functions actions."
+  policy      = data.aws_iam_policy_document.sfn_policy.json
+}
+
+data "aws_iam_policy_document" "sfn_policy" {
+  statement {
+    effect = "Allow"
+    actions = [
+      "route53:ChangeResourceRecordSets",
+      "route53:ChangeTagsForResource",
+      "route53:ListTagsForResource",
+      "route53:ListResourceRecordSets"
+    ]
     resources = ["*"]
   }
 }
 
-# ---------- CREATE ALIAS RECORD (VPC LATTICE DNS INFORMATION) ----------
-# SQS queue policy
-resource "aws_sqs_queue_policy" "sqs_queue_policy" {
-  queue_url = aws_sqs_queue.phz_information_queue.id
-  policy    = data.aws_iam_policy_document.sqs_queue_policy.json
-}
-
-data "aws_iam_policy_document" "sqs_queue_policy" {
-  statement {
-    sid       = "allow-sns-topic"
-    effect    = "Allow"
-    actions   = ["SQS:SendMessage"]
-    resources = [aws_sqs_queue.phz_information_queue.arn]
-
-    principals {
-      type        = "AWS"
-      identifiers = ["*"]
-    }
-
-    condition {
-      test     = "StringEquals"
-      variable = "aws:PrincipalServiceName"
-      values   = ["sns.amazonaws.com"]
-    }
-  }
-}
-
-# Dead-Letter Queue redrive allow policy
-resource "aws_sqs_queue_redrive_allow_policy" "queue_redrive_allow_policy" {
-  queue_url = aws_sqs_queue.queue_deadletter.id
-
-  redrive_allow_policy = jsonencode({
-    redrivePermission = "byQueue",
-    sourceQueueArns   = [aws_sqs_queue.phz_information_queue.arn]
-  })
-}
-
-# Lambda function policy (Allowing SQS actions and creation of Route 53 records)
-resource "aws_iam_role" "dns_lambda_role" {
-  name               = "DNSLambdaRole"
-  path               = "/"
-  assume_role_policy = data.aws_iam_policy_document.assume_role.json
-}
-
-resource "aws_iam_role_policy_attachment" "dns_lambda_policy_attachment" {
-  role       = aws_iam_role.dns_lambda_role.name
-  policy_arn = aws_iam_policy.dns_lambda_policy.arn
-}
-
-resource "aws_iam_role_policy_attachment" "dns_lambda_managed_lamdbabasic_policy_attachment" {
-  role       = aws_iam_role.dns_lambda_role.name
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
-}
-
-resource "aws_iam_role_policy_attachment" "dns_lambda_managed_sqsexecution_policy_attachment" {
-  role       = aws_iam_role.dns_lambda_role.name
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaSQSQueueExecutionRole"
-}
-
-resource "aws_iam_policy" "dns_lambda_policy" {
-  name        = "DNSLambdaPolicy"
-  path        = "/"
-  description = "AWS Lambda permissions to update records in a Private Hosted Zone."
-
-  policy = data.aws_iam_policy_document.dns_lambda_policy.json
-}
-
-data "aws_iam_policy_document" "dns_lambda_policy" {
-  statement {
-    sid       = "AllowResourceRecordSet"
-    effect    = "Allow"
-    actions   = ["route53:ChangeResourceRecordSets"]
-    resources = ["arn:aws:route53:::hostedzone/${var.phz_id}"]
-  }
+resource "aws_iam_role_policy_attachment" "attach_sfn_policy" {
+  role       = aws_iam_role.sfn_role.name
+  policy_arn = aws_iam_policy.sfn_policy.arn
 }

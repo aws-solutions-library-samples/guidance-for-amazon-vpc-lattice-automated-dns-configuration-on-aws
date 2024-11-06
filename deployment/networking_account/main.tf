@@ -10,12 +10,10 @@ data "aws_organizations_organization" "org" {}
 data "aws_caller_identity" "account" {}
 
 # ---------- SHARING PARAMETERS WITH SPOKE ACCOUNTS ----------
-# 1. SQS ARN - so the spoke Accounts can send the messages about the new VPC Lattice services created.
-# 2. EventBridge Event Bus ARN - so spoke Accounts can onboard their SNS topics to the central SQS queue
+# EventBridge Event Bus ARN - so spoke Accounts can send VPC Lattice service information cross-Account
 locals {
   networking_account = {
-    sqs_arn      = aws_sqs_queue.phz_information_queue.arn
-    eventbus_arn = aws_cloudwatch_event_bus.new_sns_eventbus.arn
+    eventbus_arn = aws_cloudwatch_event_bus.cross_account_eventbus.arn
   }
 }
 
@@ -43,80 +41,42 @@ resource "aws_ram_resource_association" "parameter_association" {
   resource_share_arn = aws_ram_resource_share.resource_share.arn
 }
 
-# ---------- ONBOARDING OF NEW SPOKE ACCOUNTS (SQS SUBSCRIPTION) ----------
+# ---------- EVENTBRIDGE EVENT BUS (CROSS-ACCOUNT INFORMATION SHARING) ----------
 # EventBridge event bus
-resource "aws_cloudwatch_event_bus" "new_sns_eventbus" {
-  name = "new_sns_eventbus"
+resource "aws_cloudwatch_event_bus" "cross_account_eventbus" {
+  name = "cross_account_eventbus"
 }
 
 # EventBridge event rule
-resource "aws_cloudwatch_event_rule" "new_sns_eventrule" {
-  name           = "detect-new-events-in-bus"
-  description    = "Captures new events in custom event bus"
-  event_bus_name = aws_cloudwatch_event_bus.new_sns_eventbus.name
+resource "aws_cloudwatch_event_rule" "cross_account_eventrule" {
+  name           = "VpcLattice_Information"
+  description    = "Captures events send by Step Functions where VPC Lattice services' information is shared."
+  event_bus_name = aws_cloudwatch_event_bus.cross_account_eventbus.name
 
-  # same pattern as spoke's
   event_pattern = <<PATTERN
   {
-    "source": ["aws.tag"],
-    "detail-type": ["Tag Change on Resource"],
-    "detail": {
-      "changed-tag-keys": ["NewSNS"],
-      "service": ["sns"]
+    "source": ["vpclattice_information"]
   }
-}
 PATTERN
 }
 
-# EventBridge target (Lamdba function)
-resource "aws_cloudwatch_event_target" "event_target" {
-  rule           = aws_cloudwatch_event_rule.new_sns_eventrule.name
-  target_id      = "SendToLambda"
-  arn            = aws_lambda_function.subs_lambda.arn
-  event_bus_name = aws_cloudwatch_event_bus.new_sns_eventbus.name
-}
+# EventBridge target (Step Functions)
+resource "aws_cloudwatch_event_target" "event_target_stepfunctions" {
+  rule           = aws_cloudwatch_event_rule.cross_account_eventrule.name
+  target_id      = "SendToStepFunctions"
+  arn            = aws_sfn_state_machine.sfn_phz.arn
+  event_bus_name = aws_cloudwatch_event_bus.cross_account_eventbus.name
+  role_arn       = aws_iam_role.event_target_role.arn
 
-# Permission: EventBridge to invoke Lambda function
-resource "aws_lambda_permission" "permission_subs_lambda" {
-  statement_id  = "AllowExecutionFromEventBridge"
-  action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.subs_lambda.function_name
-  principal     = "events.amazonaws.com"
-  source_arn    = aws_cloudwatch_event_rule.new_sns_eventrule.arn
-}
 
-# AWS Lambda function (Subscribe spoke SNS to SQS)
-data "archive_file" "subs_lambda" {
-  type        = "zip"
-  source_file = "${path.module}/../lambda_functions/subscription.py"
-  output_path = "${path.module}/../lambda_functions/subs_lambda.zip"
-}
-
-resource "aws_lambda_function" "subs_lambda" {
-  filename         = "${path.module}/../lambda_functions/subs_lambda.zip"
-  function_name    = "subs_lambda"
-  role             = aws_iam_role.subs_lambda_role.arn
-  handler          = "subscription.lambda_handler"
-  source_code_hash = data.archive_file.subs_lambda.output_base64sha256
-  runtime          = "python3.12"
-
-  environment {
-    variables = {
-      SQS_ARN = aws_sqs_queue.phz_information_queue.arn
-    }
+  retry_policy {
+    maximum_event_age_in_seconds = 60
+    maximum_retry_attempts       = 5
   }
-}
 
-# ---------- CREATE ALIAS RECORD (VPC LATTICE DNS INFORMATION) ----------
-# SQS Queue - receiving events from the Spoke Accounts when new VPC Lattice services are created
-resource "aws_sqs_queue" "phz_information_queue" {
-  name                    = "phz_information_queue"
-  sqs_managed_sse_enabled = true
-
-  redrive_policy = jsonencode({
-    deadLetterTargetArn = aws_sqs_queue.queue_deadletter.arn
-    maxReceiveCount     = 3
-  })
+  dead_letter_config {
+    arn = aws_sqs_queue.queue_deadletter.arn
+  }
 }
 
 # Dead-Letter queue
@@ -125,32 +85,219 @@ resource "aws_sqs_queue" "queue_deadletter" {
   sqs_managed_sse_enabled = true
 }
 
-# SQS Lambda function invocation
-resource "aws_lambda_event_source_mapping" "sqs_lambda_invocation" {
-  event_source_arn = aws_sqs_queue.phz_information_queue.arn
-  function_name    = aws_lambda_function.dns_lambda.arn
-}
+# ---------- STEP FUNCTIONS (UPDATING PRIVATE HOSTED ZONE RECORD) ----------
+resource "aws_sfn_state_machine" "sfn_phz" {
+  name     = "phz-configuration"
+  role_arn = aws_iam_role.sfn_role.arn
 
-# Lambda function (Creating/Updating Route 53 Alias records)
-data "archive_file" "dns_lambda" {
-  type        = "zip"
-  source_file = "${path.module}/../lambda_functions/dns_config.py"
-  output_path = "${path.module}/../lambda_functions/dns_lambda.zip"
-}
-
-resource "aws_lambda_function" "dns_lambda" {
-  filename         = "${path.module}/../lambda_functions/dns_lambda.zip"
-  function_name    = "dns_lambda"
-  role             = aws_iam_role.dns_lambda_role.arn
-  handler          = "dns_config.lambda_handler"
-  source_code_hash = data.archive_file.dns_lambda.output_base64sha256
-  runtime          = "python3.12"
-
-  environment {
-    variables = {
-      PHZ_ID = var.phz_id
+  definition = <<EOF
+{
+  "Comment": "A description of my state machine",
+  "StartAt": "Choice",
+  "States": {
+    "Choice": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.detail-type",
+          "StringEquals": "ServiceCreated",
+          "Next": "ServiceCreated"
+        },
+        {
+          "Variable": "$.detail-type",
+          "StringEquals": "ServiceDeleted",
+          "Next": "ListTagsForResource"
+        }
+      ],
+      "Default": "Pass"
+    },
+    "ListTagsForResource": {
+      "Type": "Task",
+      "Parameters": {
+        "ResourceId": "${var.phz_id}",
+        "ResourceType": "hostedzone"
+      },
+      "Resource": "arn:aws:states:::aws-sdk:route53:listTagsForResource",
+      "ResultPath": "$.tags",
+      "Next": "CheckTags"
+    },
+    "CheckTags": {
+      "Type": "Map",
+      "ItemProcessor": {
+        "ProcessorConfig": {
+          "Mode": "INLINE"
+        },
+        "StartAt": "TagFound",
+        "States": {
+          "TagFound": {
+            "Type": "Choice",
+            "Choices": [
+              {
+                "Variable": "$.serviceArn",
+                "StringEqualsPath": "$.tag.Key",
+                "Next": "ServiceDeleted"
+              }
+            ],
+            "Default": "DoNothing"
+          },
+          "ServiceDeleted": {
+            "Type": "Parallel",
+            "Branches": [
+              {
+                "StartAt": "ListResourceRecordSets",
+                "States": {
+                  "ListResourceRecordSets": {
+                    "Type": "Task",
+                    "Parameters": {
+                      "HostedZoneId": "${var.phz_id}"
+                    },
+                    "Resource": "arn:aws:states:::aws-sdk:route53:listResourceRecordSets",
+                    "ResultPath": "$.records",
+                    "Next": "CheckRecords"
+                  },
+                  "CheckRecords": {
+                    "Type": "Map",
+                    "ItemProcessor": {
+                      "ProcessorConfig": {
+                        "Mode": "INLINE"
+                      },
+                      "StartAt": "RecordFound",
+                      "States": {
+                        "RecordFound": {
+                          "Type": "Choice",
+                          "Choices": [
+                            {
+                              "Variable": "$.recordName",
+                              "StringEqualsPath": "$.resourceRecord.Name",
+                              "Next": "DeleteResourceRecordSet"
+                            }
+                          ],
+                          "Default": "NoAction"
+                        },
+                        "DeleteResourceRecordSet": {
+                          "Type": "Task",
+                          "Parameters": {
+                            "ChangeBatch": {
+                              "Changes": [
+                                {
+                                  "Action": "DELETE",
+                                  "ResourceRecordSet.$": "$.resourceRecord"
+                                }
+                              ]
+                            },
+                            "HostedZoneId": "${var.phz_id}"
+                          },
+                          "Resource": "arn:aws:states:::aws-sdk:route53:changeResourceRecordSets",
+                          "End": true
+                        },
+                        "NoAction": {
+                          "Type": "Pass",
+                          "End": true
+                        }
+                      }
+                    },
+                    "End": true,
+                    "ItemsPath": "$.records.ResourceRecordSets",
+                    "ItemSelector": {
+                      "recordName.$": "States.Format('{}.',$.tag.Value)",
+                      "resourceRecord.$": "$$.Map.Item.Value"
+                    }
+                  }
+                }
+              },
+              {
+                "StartAt": "DeleteTag",
+                "States": {
+                  "DeleteTag": {
+                    "Type": "Task",
+                    "Parameters": {
+                      "ResourceId": "${var.phz_id}",
+                      "ResourceType": "hostedzone",
+                      "RemoveTagKeys.$": "States.Array($.tag.Key)"
+                    },
+                    "Resource": "arn:aws:states:::aws-sdk:route53:changeTagsForResource",
+                    "End": true
+                  }
+                }
+              }
+            ],
+            "End": true
+          },
+          "DoNothing": {
+            "Type": "Pass",
+            "End": true
+          }
+        }
+      },
+      "End": true,
+      "ItemsPath": "$.tags.ResourceTagSet.Tags",
+      "ItemSelector": {
+        "serviceArn.$": "$.detail.ServiceArn",
+        "tag.$": "$$.Map.Item.Value"
+      }
+    },
+    "Pass": {
+      "Type": "Pass",
+      "End": true
+    },
+    "ServiceCreated": {
+      "Type": "Parallel",
+      "Branches": [
+        {
+          "StartAt": "CreateResourceRecordSet",
+          "States": {
+            "CreateResourceRecordSet": {
+              "Type": "Task",
+              "Parameters": {
+                "ChangeBatch": {
+                  "Changes": [
+                    {
+                      "Action": "UPSERT",
+                      "ResourceRecordSet": {
+                        "Name.$": "$.detail.CustomDomainName",
+                        "Type": "A",
+                        "AliasTarget": {
+                          "HostedZoneId.$": "$.detail.DnsEntry.HostedZoneId",
+                          "DnsName.$": "$.detail.DnsEntry.DomainName",
+                          "EvaluateTargetHealth": false
+                        }
+                      }
+                    }
+                  ]
+                },
+                "HostedZoneId": "${var.phz_id}"
+              },
+              "Resource": "arn:aws:states:::aws-sdk:route53:changeResourceRecordSets",
+              "End": true
+            }
+          }
+        },
+        {
+          "StartAt": "CreateTag",
+          "States": {
+            "CreateTag": {
+              "Type": "Task",
+              "Parameters": {
+                "ResourceId": "${var.phz_id}",
+                "ResourceType": "hostedzone",
+                "AddTags": [
+                  {
+                    "Key.$": "$.detail.Arn",
+                    "Value.$": "$.detail.CustomDomainName"
+                  }
+                ]
+              },
+              "Resource": "arn:aws:states:::aws-sdk:route53:changeTagsForResource",
+              "End": true
+            }
+          }
+        }
+      ],
+      "End": true
     }
   }
+}
+EOF
 }
 
 #--------------------------------------------------------------
