@@ -31,14 +31,13 @@ This guidance provides the following features:
 
 1. **Seamless service discovery with VPC Lattice when using custom domain names**. 
     * All the DNS resolution is configured in the Private Hosted Zone you desire.
-    * Anytime a VPC Lattice service is created in any AWS Account, its DNS configuration (custom and service-managed domain names) is sent to the AWS Account managing the DNS configuration. This messages are processed by creating an [Alias record](https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/resource-record-sets-choosing-alias-non-alias.html).
+    * Anytime a VPC Lattice service is created in any AWS Account, its DNS information (custom and service-managed domain names for created resources) is sent to the AWS Account managing the DNS configuration. This message is processed by creating an [Alias record](https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/resource-record-sets-choosing-alias-non-alias.html).
 
-2. **Seamless AWS Account onboarding**.
-    * When new Accounts that create VPC Lattice services (*spoke* Account) are needed to be onboarded (to the *central* Account), this guidance provides an automation for the onboarding process.
-    * Each spoke Account will use an [Amazon SNS](https://docs.aws.amazon.com/sns/latest/dg/welcome.html) topic to send information to a central Account [Amazon SQS](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/welcome.html) queue, so the onboarding automation will create the SNS subscription to the SQS queu.
+2. **Automated DNS records' clean-up when VPC Lattice services are deleted**.
+    * When a VPC Lattice service is deleted in any AWS Account, a notification is sent to the AWS Account managing the DNS configuration. The corresponding Alias record is then deleted.
 
 3. **Automation resources are built using Infrastructure-as-Code**.
-    * [Hashicorp Terraform](https://www.terraform.io/) is used for the guidance automated code deployment.
+    * [AWS CloudFormation](https://aws.amazon.com/cloudformation/) or [Hashicorp Terraform](https://www.terraform.io/) are used as options for the guidance automated code deployment.
     * Given this automation is built for multi-account environments, detailed deployment steps are provided in the [Deploy the Guidance](#deploy-the-guidance) section.
 
 ### Use cases
@@ -62,33 +61,29 @@ Below is the Reference architecture diagram and workflow of the Guidance for VPC
 Figure 1. VPC Lattice automated DNS configuration on AWS - Reference Architecture
 </div>
 
-The architecure workflow is divided in two parts:
+(**1**) When a new spoke Account creates a new VPC Lattice service, an [Amazon EventBridge](https://aws.amazon.com/eventbridge/) rule checks that the [VPC Lattice](https://aws.amazon.com/vpc/lattice/) service has been created with the proper tag. The EventBridge rule also checks if a VPC Lattice service has been deleted, from the deletion of such tag.
 
-* **Spoke Account onboarding**. This is executed only once, as the SNS topic created (sending the VPC Lattice service information to the Networking Account) needs to be subscribed to the SQS queue in the Networking Account.
-    * (**1**) <!--An [Amazon EventBridge rule](https://aws.amazon.com/eventbridge/) checks if a new SNS topic has been created (it checks for the tag *NewSNS = true*). If so, the event is sent to the Networking Account via a custom event bus, notifying about the topic creation. In the Networking Account, events pushed into the custom event bus are processed by an [AWS Lambda](https://aws.amazon.com/lambda/) function, creating the cross-account subscription of the SNS topic to the SQS queue.-->
-      When a new Spoke account deploys automation resources, an [Amazon EventBridge](https://aws.amazon.com/eventbridge/) rule checks that a new [Amazon Simple Notification Service (Amazon SNS)](https://aws.amazon.com/sns/) topic has been created with the proper tag.
-* **Creation of DNS Alias records when new VPC Lattice services are created**. Anytime a new VPC Lattice service gets created in an onboarded spoke Account, its DNS information is sent to the networking Account so an Alias record can be created.
-    * (**2**) <!-- An EventBridge rule checks the tag in a new VPC Lattice service (*NewService = true*) and invokes a Lambda function which will obtain the DNS information of the VPC Lattice service and publish it to the SNS topic.-->
-The New SNS topic EventBridge rule in the spoke account sends the event to the networking account using a [custom event bus](https://docs.aws.amazon.com/eventbridge/latest/userguide/eb-create-event-bus.html) to notify the creation of a new [SNS topic](https://docs.aws.amazon.com/sns/latest/dg/sns-create-topic.html).
-    * (**3**) <!-- Once the DNS information of the VPC Lattice service arrives to the SQS queue, a Lambda fuction is called to update the information in the Route 53 Private Hosted Zone.-->
-The `SNS subscription` AWS Lambda function is invoked to subscribe the [Amazon Simple Queue Service (Amazon SQS)](https://aws.amazon.com/sqs/) topic in the Networking account to the newly created SNS topic in the Spoke account.
-    * (**4**) The New VPC Lattice service EventBridge rule checks for a proper tag in [Amazon VPC Lattice](https://aws.amazon.com/vpc/lattice/).
-    * (**5**) The `VPC Lattice service info` Lambda function is invoked to obtain the DNS information of *Amazon VPC Lattice* and publish that information to an SNS topic in the Spoke account.
-    * (**6**) The SNS topic in the Spoke account sends the Amazon VPC Lattice DNS information to the Networking account through the [Amazon SQS queue](https://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-resource-sqs-queue.html).
-    * (**7**) Messages arriving to the *Amazon SQS queue* will invoke the Create/Update Alias record Lambda function.
-    * (**8**) Unsuccessfully processed messages are stored in the [Amazon SQS dead-letter queue (DLQ)](https://aws.amazon.com/what-is/dead-letter-queue/) for monitoring.
-    * (**9**) The `Create/Update Alias record` Lambda function will create and update the corresponding alias record in the [Amazon Route 53](https://aws.amazon.com/route53/) private hosted zone.
-    * (**10**) [AWS Systems Manager](https://aws.amazon.com/systems-manager/) and [AWS Resource Access Manager (AWS RAM)](https://aws.amazon.com/ram/) are used for parameter storage and cross-account data sharing.
+(**2**) The event is sent to an [AWS Step Functions](https://aws.amazon.com/step-functions/) state machine. Depending the action (creation or deletion), the state machine publishes an event to a custom event bus. In addition, for created resources with custom domain names, the state machine obtains the domain name configuration (VPC Lattice-generated domain name, VPC Lattice-managed hosted zone, and custom domain name).
 
-  
+(**3**) The custom event bus is configured with a target pointing to an event bus in the Networking Account.
+
+(**4**) Unsuccessfully processed events are stored in a [Amazon SQS dead-letter queue (DLQ)](https://aws.amazon.com/what-is/dead-letter-queue/) for monitoring.
+
+(**5**) The custom event bus in the Networking Account invokes a Step Functions state machine to process the notification send by the spoke Account.
+
+(**6**) Unsuccessfully processed events are stored in DLQ for monitoring.
+
+(**7**) The state machine will create/delete the corresponding Alias record in the [Amazon Route 53](https://aws.amazon.com/route53/) private hosted zone.
+
+(**8**) [AWS Systems Manager](https://aws.amazon.com/systems-manager/) and [AWS Resource Access Manager (AWS RAM)](https://aws.amazon.com/ram/) are used for parameter storage and cross-account data sharing.
+
 ### AWS Services used in this Guidance
 
 | **AWS service**  | Role | Description | Service Availability |
 |-----------|------------|-------------|-------------|
 | [Amazon EventBridge](https://aws.amazon.com/eventbridge/)| Core service | Rules and custom event buses are used for notifying and detecting new resources.| [Documentation](https://docs.aws.amazon.com/general/latest/gr/ev.html#ev_region) |
-[Amazon Lambda](https://aws.amazon.com/lambda/)| Core Service | Serverless functions used for filtering, subscribing and updating information. | [Documentation](https://docs.aws.amazon.com/general/latest/gr/lambda-service.html#lambda_region) |
+[AWS Step Functions](https://aws.amazon.com/step-functions/)| Core Service | Serverless state machine used for filtering, subscribing and updating information. | [Documentation](https://docs.aws.amazon.com/general/latest/gr/step-functions.html) |
 [Amazon SNS](https://aws.amazon.com/sns/)| Core Service | Simple event information publisher, used for cross-account subscription. | [Documentation](https://docs.aws.amazon.com/general/latest/gr/sns.html#sns_region) |
-[Amazon SQS](https://aws.amazon.com/sqs/)| Core Service | Simple event information queue, used for cross-account subscription. | [Documentation](https://docs.aws.amazon.com/general/latest/gr/sqs-service.html#sqs_region) |
 [AWS Systems Manager](https://aws.amazon.com/systems-manager/)| Support Service | Used to store parameters that will later be shared. | [Documentation](https://docs.aws.amazon.com/general/latest/gr/ssm.html#ssm_region) |
 [AWS Resource Access Manager (RAM)](https://aws.amazon.com/ram/)| Support Service | Used to share parameters among accounts. | [Documentation](https://docs.aws.amazon.com/general/latest/gr/ram.html#ram_region) |
 
@@ -106,8 +101,7 @@ This breakdown of the costs of the Networking Account shows that the highest cos
 |-----------|------------|------------|
 | AWS Systems Manager  | 1 advanced parameter | \$ 0.05 |
 | Amazon EventBridge  | <= 1 million custom events | \$ 1.00 |
-| AWS Lambda  | < 1 million requests & 400,000 GB-seconds of compute time | \$ 0.00 |
-| Amazon SQS | < 1 million requests| \$ 0.00 | 
+| AWS Step Functions  | < 4,000 state transitions | \$ 0.00 |
 | **TOTAL estimate** |  | **\$ 1.05/month** |
 
 **Estimated monthly cost breakdown - Spoke Accounts**
@@ -117,9 +111,7 @@ The following table provides a sample cost breakdown for deploying this Guidance
 | **AWS service**  | Dimensions | Cost, month \[USD\] |
 |-----------|------------|------------|
 | Amazon EventBridge  | <= 1 million custom events | \$ 1.00 |
-| AWS Lambda  | < 1 million requests & 400,000 GB-seconds of compute time | \$ 0.00 |
-| Amazon SNS  | < 1 million requests | \$ 0.00|
-| Amazon SQS | < 1 million requests| \$ 0.00 | 
+| AWS Step Functions  | < 4,000 state transitions | \$ 0.00 |
 | **TOTAL estimate** |  | **\$ 1.00/month** |
 
 Please see price breakdown details in this [AWS calculator](https://calculator.aws/#/estimate?id=6ee067550372e1563469fded6e9f69d665113897)
@@ -131,29 +123,35 @@ Bellow are the pricing references for each AWS Service used in this Guidance.
 | **AWS service**  |  Pricing  |
 |-----------|---------------|
 |[Amazon EventBridge](https://aws.amazon.com/eventbridge/)| [Documentation](https://aws.amazon.com/eventbridge/pricing/) |
-[Amazon Lambda](https://aws.amazon.com/lambda/)|  [Documentation](https://aws.amazon.com/lambda/pricing/) |
-[Amazon SNS](https://aws.amazon.com/sns/)|  [Documentation](https://aws.amazon.com/sns/pricing/) |
-[Amazon SQS](https://aws.amazon.com/sqs/)| [Documentation](https://aws.amazon.com/sqs/pricing/) |
+[AWS Step Functions](https://aws.amazon.com/step-functions/)|  [Documentation](https://aws.amazon.com/step-functions/pricing/) |
 [AWS Systems Manager](https://aws.amazon.com/systems-manager/)|  [Documentation](https://aws.amazon.com/systems-manager/pricing/) |
 
 ## Prerequisites
 
 ### Operating System
 
-This Guidance uses [AWS Serverless](https://aws.amazon.com/serverless/) managed services, so there's no OS patching or management. The Lambda functions are using [Python](https://docs.python.org/3/reference/index.html), and all the code was tested using `Python 3.12`.
+This Guidance uses [AWS Serverless](https://aws.amazon.com/serverless/) managed services, so there's no OS patching or management.
 
 ### Third-party tools
 
-This solution uses [Terraform](https://www.terraform.io/) as an Infrastructure-as-Code provider. You will need Terraform installed to deploy. These instructions were tested with Terraform version `1.9.3`. You can install Terraform following [Hashicorp's documentation](https://developer.hashicorp.com/terraform/tutorials/aws-get-started/install-cli).
+This solution uses either [AWS CloudFormation](https://aws.amazon.com/cloudformation/) or [Terraform](https://www.terraform.io/) as an Infrastructure-as-Code provider. Depending the IaC framework you use, 
 
-For each AWS Account deployment (under the [deployment](https://github.com/aws-solutions-library-samples/guidance-for-vpc-lattice-automated-dns-configuration-on-aws/tree/main/deployment) folder), you will find the following HCL config files:
+#### AWS CloudFormation
+
+[TO ADD]
+
+#### Terraform
+
+You will need Terraform installed to deploy. These instructions were tested with Terraform version `1.9.3`. You can install Terraform following [Hashicorp's documentation](https://developer.hashicorp.com/terraform/tutorials/aws-get-started/install-cli). In addition, AWS credentials need to be configured according to the [Terraform AWS Provider documentation](https://registry.terraform.io/providers/-/aws/latest/docs#authentication-and-configuration). 
+
+For each AWS Account deployment (under the [deployment/terraform](https://github.com/aws-solutions-library-samples/guidance-for-vpc-lattice-automated-dns-configuration-on-aws/tree/main/deployment/terraform) folder), you will find the following HCL config files:
 
 * *providers.tf* file provides the Terraform and [AWS provider](https://registry.terraform.io/providers/hashicorp/aws/latest/docs) version to use.
 * *main.tf* and *iam.tf* provide the resources' configuration. While *main.tf* holds the configuration of the different services, *iam.tf* holds the configuration of IAM roles and policies.
-* *variables.tf* defines the input each deployment requirements. Below in the [Deploy the Guidance](#deploy-the-guidance) section, you will see which input variables are required in each AWS Account.
+* *variables.tf* defines the input each deployment requirements. Below in the [Deploy the Guidance](#deploy-the-guidance) section, you will see the link to the Deployment Guide for more information about the deployment steps.
 
 ```bash
-bash-3.2$ cd guidance-for-vpc-lattice-automated-dns-configuration-on-aws/deployment/networking_account
+bash-3.2$ cd guidance-for-vpc-lattice-automated-dns-configuration-on-aws/deployment/terraform/networking_account
 bash-3.2$ ls
 README.md
 main.tf
@@ -185,8 +183,6 @@ We use the local backend configuration to store the state files. We recommend th
 
 ### AWS account requirements
 
-These instructions require AWS credentials configured according to the [Terraform AWS Provider documentation](https://registry.terraform.io/providers/-/aws/latest/docs#authentication-and-configuration). 
-
 The credentials must have **IAM permission to create and update resources in the Account** - these persmissions will vary depending the Account type (*networking* or *spoke*). 
 
 In addition, the Guidance supposes your Accounts are part of the same [AWS Organization](https://aws.amazon.com/organizations/) - as IAM policies restrict cross-Account actions between Accounts within the same Organization. For RAM share to work, you need to [enable resource sharing with the Organization](https://docs.aws.amazon.com/ram/latest/userguide/getting-started-sharing.html#getting-started-sharing-orgs).
@@ -207,21 +203,19 @@ This guidance relies on many reasonable default options and "principle of least 
 
 ### Encryption at rest
 
-Encryption at rest is configured in the SNS topic and SQS queues, using AWS-managed keys. Systems Manager parameters are not configured as `SecureString` due to the fact that they must be encrypted with a customer managed key, and you must share the key separately through AWS Key Management Service (AWS KMS).
+Encryption at rest is configured in the SQS queues (DLQ), using AWS-managed keys. Systems Manager parameters are not configured as `SecureString` due to the fact that they must be encrypted with a customer managed key, and you must share the key separately through AWS Key Management Service (AWS KMS).
 
 * Given its sensitivity, we are not creating any AWS KMS resource in this guidance.
-* If you would like to use customer managed keys to encrypt at rest the data of all these services, you will need to change the code to configure this option in the corresponding resources: 
-    * [SNS topic](https://docs.aws.amazon.com/sns/latest/dg/sns-server-side-encryption.html)
+* If you would like to use customer managed keys to encrypt at rest the data of all these services, you will need to change the code to configure this option in the corresponding resources:
     * [SQS queue](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-server-side-encryption.html)
     * [Systems Manager parameter](https://docs.aws.amazon.com/kms/latest/developerguide/services-parameter-store.html).
 
 ## Deploy the Guidance 
 
-| **Account type** |  **Deployment time (min)**  |
-|------------------|-----------------------------|
-| Networking       | 3                           | 
-| Spoke            | 2                           |
-
+| **Account type** |  **Deployment time (min) - Terraform**  |
+|------------------|-----------------------------------------|
+| Networking       | 1                                       | 
+| Spoke            | 1                                       |
 
 Please see the detailed Implementation Guide [here](https://aws-solutions-library-samples.github.io/networking/amazon-vpc-lattice-automated-dns-configuration-on-aws.html) for step-by-step deployment instructions. 
 

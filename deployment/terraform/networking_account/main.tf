@@ -298,6 +298,18 @@ resource "aws_sfn_state_machine" "sfn_phz" {
   }
 }
 EOF
+
+  logging_configuration {
+    log_destination        = "${aws_cloudwatch_log_group.sfn_phzconfiguration_loggroup.arn}:*"
+    include_execution_data = true
+    level                  = "ERROR"
+  }
+}
+
+# ---------- VISIBILITY: AMAZON CLOUDWATCH LOGS ----------
+# Step Functions state machine
+resource "aws_cloudwatch_log_group" "sfn_phzconfiguration_loggroup" {
+  name = "/aws/vendedlogs/states/"
 }
 
 #--------------------------------------------------------------

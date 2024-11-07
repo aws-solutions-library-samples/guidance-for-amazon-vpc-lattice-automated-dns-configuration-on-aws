@@ -108,6 +108,22 @@ data "aws_iam_policy_document" "sfn_policy" {
       "route53:ListTagsForResource",
       "route53:ListResourceRecordSets"
     ]
+    resources = ["arn:aws:route53:::hostedzone/${var.phz_id}"]
+  }
+  statement {
+    effect = "Allow"
+    actions = [
+      "logs:CreateLogDelivery",
+      "logs:CreateLogStream",
+      "logs:GetLogDelivery",
+      "logs:UpdateLogDelivery",
+      "logs:DeleteLogDelivery",
+      "logs:ListLogDeliveries",
+      "logs:PutLogEvents",
+      "logs:PutResourcePolicy",
+      "logs:DescribeResourcePolicies",
+      "logs:DescribeLogGroups"
+    ]
     resources = ["*"]
   }
 }
