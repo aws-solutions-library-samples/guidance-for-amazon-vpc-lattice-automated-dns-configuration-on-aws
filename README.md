@@ -31,12 +31,9 @@ This guidance provides the following features:
 
 1. **Seamless service discovery with VPC Lattice when using custom domain names**. 
     * All the DNS resolution is configured in the Private Hosted Zone you desire.
-    * Anytime a VPC Lattice service is created in any AWS Account, its DNS information (custom and service-managed domain names for created resources) is sent to the AWS Account managing the DNS configuration. This message is processed by creating an [Alias record](https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/resource-record-sets-choosing-alias-non-alias.html).
+    * Anytime a VPC Lattice service is created/deleted in any AWS Account, its DNS information (custom and service-managed domain names for created resources) is sent to the AWS Account managing the DNS configuration. This message is processed by creating/deleting an [Alias record](https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/resource-record-sets-choosing-alias-non-alias.html).
 
-2. **Automated DNS records' clean-up when VPC Lattice services are deleted**.
-    * When a VPC Lattice service is deleted in any AWS Account, a notification is sent to the AWS Account managing the DNS configuration. The corresponding Alias record is then deleted.
-
-3. **Automation resources are built using Infrastructure-as-Code**.
+2. **Automation resources are built using Infrastructure-as-Code**.
     * [AWS CloudFormation](https://aws.amazon.com/cloudformation/) or [Hashicorp Terraform](https://www.terraform.io/) are used as options for the guidance automated code deployment.
     * Given this automation is built for multi-account environments, detailed deployment steps are provided in the [Deploy the Guidance](#deploy-the-guidance) section.
 
@@ -82,10 +79,11 @@ Figure 1. VPC Lattice automated DNS configuration on AWS - Reference Architectur
 | **AWS service**  | Role | Description | Service Availability |
 |-----------|------------|-------------|-------------|
 | [Amazon EventBridge](https://aws.amazon.com/eventbridge/)| Core service | Rules and custom event buses are used for notifying and detecting new resources.| [Documentation](https://docs.aws.amazon.com/general/latest/gr/ev.html#ev_region) |
-[AWS Step Functions](https://aws.amazon.com/step-functions/)| Core Service | Serverless state machine used for filtering, subscribing and updating information. | [Documentation](https://docs.aws.amazon.com/general/latest/gr/step-functions.html) |
+[AWS Step Functions](https://aws.amazon.com/step-functions/)| Core Service | Serverless state machine used for filtering, subscribing and updating information. | [Documentation](https://docs.aws.amazon.com/general/latest/gr/step-functions.html#ram_region) |
 [Amazon SNS](https://aws.amazon.com/sns/)| Core Service | Simple event information publisher, used for cross-account subscription. | [Documentation](https://docs.aws.amazon.com/general/latest/gr/sns.html#sns_region) |
 [AWS Systems Manager](https://aws.amazon.com/systems-manager/)| Support Service | Used to store parameters that will later be shared. | [Documentation](https://docs.aws.amazon.com/general/latest/gr/ssm.html#ssm_region) |
 [AWS Resource Access Manager (RAM)](https://aws.amazon.com/ram/)| Support Service | Used to share parameters among accounts. | [Documentation](https://docs.aws.amazon.com/general/latest/gr/ram.html#ram_region) |
+[Amazon Simple Queue Service (SQS)](https://aws.amazon.com/sqs/)| Support Service | Used to store unprocessed messages for troubleshooting. | [Documentation](https://docs.aws.amazon.com/general/latest/gr/sqs-service.html#ram_region)
 
 ### Cost 
 
@@ -99,9 +97,10 @@ This breakdown of the costs of the Networking Account shows that the highest cos
 
 | **AWS service**  | Dimensions | Cost, month \[USD\] |
 |-----------|------------|------------|
-| AWS Systems Manager  | 1 advanced parameter | \$ 0.05 |
+| AWS Systems Manager | 1 advanced parameter | \$ 0.05 |
 | Amazon EventBridge  | <= 1 million custom events | \$ 1.00 |
 | AWS Step Functions  | < 4,000 state transitions | \$ 0.00 |
+| Amazon SQS          | <= 1 million requests/month | \$ 0.00 |
 | **TOTAL estimate** |  | **\$ 1.05/month** |
 
 **Estimated monthly cost breakdown - Spoke Accounts**
@@ -112,6 +111,7 @@ The following table provides a sample cost breakdown for deploying this Guidance
 |-----------|------------|------------|
 | Amazon EventBridge  | <= 1 million custom events | \$ 1.00 |
 | AWS Step Functions  | < 4,000 state transitions | \$ 0.00 |
+| Amazon SQS          | <= 1 million requests/month | \$ 0.00 |
 | **TOTAL estimate** |  | **\$ 1.00/month** |
 
 Please see price breakdown details in this [AWS calculator](https://calculator.aws/#/estimate?id=6ee067550372e1563469fded6e9f69d665113897)
@@ -125,6 +125,7 @@ Bellow are the pricing references for each AWS Service used in this Guidance.
 |[Amazon EventBridge](https://aws.amazon.com/eventbridge/)| [Documentation](https://aws.amazon.com/eventbridge/pricing/) |
 [AWS Step Functions](https://aws.amazon.com/step-functions/)|  [Documentation](https://aws.amazon.com/step-functions/pricing/) |
 [AWS Systems Manager](https://aws.amazon.com/systems-manager/)|  [Documentation](https://aws.amazon.com/systems-manager/pricing/) |
+[Amazon Simple Queue Service (SQS)](https://aws.amazon.com/sqs/)| [Documentation](https://aws.amazon.com/sqs/pricing/)
 
 ## Prerequisites
 
@@ -134,13 +135,7 @@ This Guidance uses [AWS Serverless](https://aws.amazon.com/serverless/) managed 
 
 ### Third-party tools
 
-This solution uses either [AWS CloudFormation](https://aws.amazon.com/cloudformation/) or [Terraform](https://www.terraform.io/) as an Infrastructure-as-Code provider. Depending the IaC framework you use, 
-
-#### AWS CloudFormation
-
-[TO ADD]
-
-#### Terraform
+For this solution you can either use [AWS CloudFormation](https://aws.amazon.com/cloudformation/) or [Terraform](https://www.terraform.io/) as an Infrastructure-as-Code provider. **For Terraform, check the requirements below**.
 
 You will need Terraform installed to deploy. These instructions were tested with Terraform version `1.9.3`. You can install Terraform following [Hashicorp's documentation](https://developer.hashicorp.com/terraform/tutorials/aws-get-started/install-cli). In addition, AWS credentials need to be configured according to the [Terraform AWS Provider documentation](https://registry.terraform.io/providers/-/aws/latest/docs#authentication-and-configuration). 
 
