@@ -206,10 +206,10 @@ Encryption at rest is configured in the SQS queues (DLQ), using AWS-managed keys
 
 ## Deploy the Guidance 
 
-| **Account type** |  **Deployment time (min) - Terraform**  |
-|------------------|-----------------------------------------|
-| Networking       | 1                                       | 
-| Spoke            | 1                                       |
+| **Account type** |  **Deployment time (min) - CloudFormation**  | **Deployment time (min) - Terraform** |
+|------------------|----------------------------------------------|---------------------------------------|
+| Networking       | 3                                            | 1                                     |
+| Spoke            | 3                                            | 1                                     |
 
 Please see the detailed Implementation Guide [here](https://aws-solutions-library-samples.github.io/networking/amazon-vpc-lattice-automated-dns-configuration-on-aws.html) for step-by-step deployment instructions. 
 
