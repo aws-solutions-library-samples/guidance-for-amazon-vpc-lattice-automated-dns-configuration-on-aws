@@ -1,0 +1,376 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Guidance for VPC Lattice automated DNS configuration on AWS (SO9532)
+
+Parameters:
+  ParameterName:
+    Type: String
+    Description: Systems Manager Parameter name
+    Default: automation_resource
+
+Resources:
+  # ---------- IAM ROLE (EVENTBRIDGE RULES) ----------
+  EventBridgeRulesRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: EventRuleRole
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service:
+                - !Sub events.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns: 
+        - !Ref EventBridgeRulesPolicy
+
+  EventBridgeRulesPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: EventTargetPolicy
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action:
+              - events:PutEvents
+            Resource:
+              - !GetAtt GetParameter.Value
+          - Effect: Allow
+            Action:
+              - states:StartExecution
+            Resource:
+              - !GetAtt StepFunctionsVPCLatticeInformation.Arn
+
+  # ---------- EVENTBRIDGE RULE: CATCHING VPC LATTICE SERVICE CREATION/DELETION VIA TAGS ----------
+  EventRuleCrossAccount:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: vpclattice_newservice_rule
+      EventPattern:
+        source:
+          - aws.tag
+        detail-type:
+          - "Tag Change on Resource"
+        detail:
+          changed-tag-keys: 
+            - NewService
+          service:
+            - vpc-lattice
+          resource-type:
+            - service
+      State: "ENABLED"
+      Targets:
+        - Id: SendToStepFunctions
+          Arn: !GetAtt StepFunctionsVPCLatticeInformation.Arn
+          RoleArn: !GetAtt EventBridgeRulesRole.Arn
+          RetryPolicy:
+            MaximumEventAgeInSeconds: 60
+            MaximumRetryAttempts: 5
+
+  # ---------- STEP FUNCTIONS: OBTAINING VPC LATTICE SERVICE INFORMATION ----------
+  StepFunctionsVPCLatticeInformation:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineName: vpclattice-information
+      RoleArn: !GetAtt StepFunctionsRole.Arn
+      StateMachineType: "STANDARD"
+      LoggingConfiguration: 
+        IncludeExecutionData: true
+        Level: "ERROR"
+        Destinations: 
+          - CloudWatchLogsLogGroup:
+              LogGroupArn: !GetAtt StepFunctionsLogGroup.Arn
+      DefinitionString: |
+        {
+          "Comment": "A description of my state machine",
+          "StartAt": "ActionType",
+          "States": {
+            "ActionType": {
+              "Type": "Choice",
+              "Choices": [
+                {
+                  "And": [
+                    {
+                      "Variable": "$.detail.tags.NewService",
+                      "IsPresent": true
+                    },
+                    {
+                      "Variable": "$.detail.tags.NewService",
+                      "StringEquals": "true"
+                    }
+                  ],
+                  "Next": "GetService"
+                },
+                {
+                  "Not": {
+                    "Variable": "$.detail.tags.NewService",
+                    "IsPresent": true
+                  },
+                  "Next": "PutEventServiceDeleted"
+                }
+              ],
+              "Default": "Pass"
+            },
+            "Pass": {
+              "Type": "Pass",
+              "End": true
+            },
+            "GetService": {
+              "Type": "Task",
+              "Parameters": {
+                "ServiceIdentifier.$": "$.resources[0]"
+              },
+              "Resource": "arn:aws:states:::aws-sdk:vpclattice:getService",
+              "ResultSelector": {
+                "ServiceInformation.$": "$"
+              },
+              "Next": "CustomDNSConfigured"
+            },
+            "CustomDNSConfigured": {
+              "Type": "Choice",
+              "Choices": [
+                {
+                  "Variable": "$.ServiceInformation.CustomDomainName",
+                  "IsPresent": true,
+                  "Next": "PutEventServiceCreated"
+                }
+              ],
+              "Default": "Pass"
+            },
+            "PutEventServiceCreated": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::aws-sdk:eventbridge:putEvents",
+              "Parameters": {
+                "Entries": [
+                  {
+                    "Detail.$": "$.ServiceInformation",
+                    "DetailType": "ServiceCreated",
+                    "EventBusName": "vpclattice_information",
+                    "Source": "vpclattice_information"
+                  }
+                ]
+              },
+              "End": true
+            },
+            "PutEventServiceDeleted": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::events:putEvents",
+              "Parameters": {
+                "Entries": [
+                  {
+                    "Detail": {
+                      "ServiceArn.$": "$.resources[0]"
+                    },
+                    "DetailType": "ServiceDeleted",
+                    "EventBusName": "vpclattice_information",
+                    "Source": "vpclattice_information"
+                  }
+                ]
+              },
+              "End": true
+            }
+          }
+        }
+
+  # IAM Role/Policy (Step Functions state machine)
+  StepFunctionsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: StepFunctionsRole
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service:
+                - !Sub states.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns: 
+        - !Ref StepFunctionsPolicy
+
+  StepFunctionsPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: StepFunctionsPolicy
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action:
+              - vpc-lattice:GetService
+            Resource:
+              - !Sub arn:aws:vpc-lattice:${AWS::Region}:${AWS::AccountId}:service/*
+          - Effect: Allow
+            Action:
+              - events:PutEvents
+            Resource:
+              - !GetAtt EventBusVPCLatticeInformation.Arn
+          - Effect: Allow
+            Action:
+              - logs:UpdateLogDelivery
+              - logs:PutResourcePolicy
+              - logs:PutLogEvents
+              - logs:ListLogDeliveries
+              - logs:GetLogDelivery
+              - logs:DescribeResourcePolicies
+              - logs:DescribeLogGroups
+              - logs:DeleteLogDelivery
+              - logs:CreateLogStream
+              - logs:CreateLogDelivery
+            Resource:
+              - "*"
+
+  # ---------- AMAZON CLOUDWATCH LOG GROUP ----------
+  StepFunctionsLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/vendedlogs/states/
+      RetentionInDays: 30
+  
+  # --------- EVENTBRIDGE BUS/RULE/TARGET: SENDING EVENTS TO NETWORKING ACCOUNT BUS ----------
+  # Event bus
+  EventBusVPCLatticeInformation:
+    Type: AWS::Events::EventBus
+    Properties:
+      Name: vpclattice_information
+  
+  # Event rule
+  EventRuleVPCLatticeInformation:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: VpcLattice_Information
+      EventBusName: !GetAtt EventBusVPCLatticeInformation.Arn
+      EventPattern:
+        source:
+          - "vpclattice_information"
+      State: "ENABLED"
+      Targets:
+        - Id: SendToCrossAccountEventBus
+          Arn: !GetAtt GetParameter.Value
+          RoleArn: !GetAtt EventBridgeRulesRole.Arn
+          DeadLetterConfig:
+            Arn: !GetAtt DeadLetterQueue.Arn
+  
+  # SQS queue
+  DeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: deadletter-queue
+      SqsManagedSseEnabled: true
+  
+  # ----------- CUSTOM RESOURCE: OBTAINING SHARE PARAMETER (CROSS-ACCOUNT EVENT BUS ARN) ----------
+  GetParameter:
+    Type: Custom::GetParameter
+    DependsOn:
+      - GetParameterLogGroup
+    Properties:
+      ServiceToken: !GetAtt GetParameterFunction.Arn
+      ParameterName: !Ref ParameterName
+
+  # IAM Role (Describe Organization)
+  GetParameterFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: AllowDescribeOrganization
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ssm:DescribeParameters
+                  - ssm:GetParameter
+                Resource:
+                  - "*"
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+
+  GetParameterLogGroup:
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W84
+            reason: Encryption not required for this log group
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: '/aws/lambda/GetParameterFunction'
+      RetentionInDays: 7
+  
+  GetParameterFunction:
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W58
+            reason: CWL permissions granted by use of AWSLambdaBasicExecutionRole
+          - id: W89
+            reason: No requirement for this function to be in a VPC
+          - id: W92
+            reason: No requirement to limit simultaneous executions
+    Type: AWS::Lambda::Function
+    Properties:
+      Description: Get AWS Systems Manager Parameter (Shared)
+      Runtime: python3.12
+      Timeout: 10
+      Role: !GetAtt GetParameterFunctionRole.Arn
+      Handler: index.lambda_handler
+      Code:
+        ZipFile: |-
+          import logging
+          import boto3
+          import json
+          import cfnresponse
+          from botocore.exceptions import ClientError
+
+          log = logging.getLogger("handler")
+          log.setLevel(logging.INFO)
+
+          ssm = boto3.client('ssm')
+
+          def lambda_handler(event, context):
+              try:
+                  log.info("Received event: %s", json.dumps(event))
+                  parameter_name = event["ResourceProperties"]['ParameterName']
+                  response = {}
+
+                  parameter_arn = ssm.describe_parameters(
+                    Filters=[
+                      {
+                        'Key': 'Name',
+                        'Values': [
+                          parameter_name,
+                        ]
+                      },
+                    ],
+                    MaxResults=5,
+                    Shared=True|False
+                  )['Parameters'][0]['ARN']
+                  
+                  value = ssm.get_parameter(
+                      Name=parameter_arn
+                  )['Parameter']['Value']
+
+                  response['Value'] = value
+                  
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, response)
+                  
+              except:
+                  log.exception("whoops")
+                  cfnresponse.send(
+                      event,
+                      context,
+                      cfnresponse.FAILED,
+                      {},
+                      reason="Caught exception, check logs",
+                  )

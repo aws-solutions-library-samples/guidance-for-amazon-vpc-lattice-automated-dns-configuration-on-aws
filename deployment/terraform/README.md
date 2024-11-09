@@ -1,6 +1,6 @@
-# Guidance for VPC Lattice automated DNS configuration on AWS - Deployment
+# Guidance for VPC Lattice automated DNS configuration on AWS - Deployment (Terraform)
 
-In this folder you will find three different folders:
+In this folder you will find two different folders:
 
 * networking_account
 * spoke_account
