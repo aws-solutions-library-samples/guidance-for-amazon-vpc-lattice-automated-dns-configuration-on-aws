@@ -8,7 +8,7 @@ In this folder you can find code building the VPC Lattice and Amazon Route 53 re
 
 ## How to deploy this test code?
 
-The test code assumes all the AWS Accounts are in the same AWS Organization - all the resources are shared using AWS RAM to the AWS Organization. If that's not the case, change the corresponding RAM resources in the *networking_account* folder to share with the corresponding AWS Accounts.
+The test code assumes all the AWS Accounts are in the same AWS Organization - all the resources are shared using AWS RAM to the AWS Organization.
 
 1. **Networking Account** Deploy the VPC Lattice service network and Route 53 resources (Profile & Private Hosted Zone). You will need to provide as variable the Private Hosted Zone name.
 
@@ -42,7 +42,7 @@ aws cloudformation deploy --stack-name TestProviderAccount --template-file ./tes
 
 ## Clean-up
 
-1. **Provider Account** Remove both the VPC Lattice service, so the automation can notify the Networking Account and the DNS configuration is removed.
+1. **Provider Account** Remove the VPC Lattice service, so the automation can notify the Networking Account and the DNS configuration is removed.
 
 ```
 aws cloudformation delete-stack --stack-name TestProviderAccount --region {REGION}
