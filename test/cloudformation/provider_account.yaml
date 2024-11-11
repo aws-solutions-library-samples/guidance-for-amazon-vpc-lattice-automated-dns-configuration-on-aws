@@ -1,0 +1,252 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Test - Provider Account. Guidance for VPC Lattice automated DNS configuration on AWS
+
+Parameters:
+  VPCLatticeServiceCustomDomainName:
+    Type: String
+    Description: Custom domain name for VPC Lattice service.
+  ServiceNetworkParameterName: 
+    Type: String
+    Description: SSM parameter name for service network VPC ID
+    Default: test_service_network
+  
+
+Resources:
+  # ---------- VPC LATTICE SERVICE ----------
+  VPCLatticeService:
+    Type: AWS::VpcLattice::Service
+    Properties:
+      Name: test-provider-lambdaservice
+      AuthType: NONE
+      CustomDomainName: !Ref VPCLatticeServiceCustomDomainName
+      Tags:
+        - Key: NewService
+          Value: true
+
+  VPCLatticeServiceNetworkServiceAssociation:
+    Type: AWS::VpcLattice::ServiceNetworkServiceAssociation
+    Properties:
+      ServiceIdentifier: !GetAtt VPCLatticeService.Arn
+      ServiceNetworkIdentifier: !GetAtt TestGetParameterServiceNetwork.Value
+
+  VPCLatticeServiceListener:
+    Type: AWS::VpcLattice::Listener
+    Properties:
+      ServiceIdentifier: !Ref VPCLatticeService
+      Name: test-vpclattice-httplistener
+      Port: 80
+      Protocol: HTTP
+      DefaultAction: 
+        Forward:
+          TargetGroups:
+            - TargetGroupIdentifier: !Ref VPCLatticeServiceTargetGroup
+              Weight: 100
+
+  VPCLatticeServiceTargetGroup:
+    Type: AWS::VpcLattice::TargetGroup
+    Properties:
+      Name: lambdatarget
+      Type: LAMBDA
+      Config: 
+        LambdaEventStructureVersion: V2
+      Targets: 
+        - Id: !GetAtt ServiceFunction.Arn
+
+  # ---------- AWS LAMBDA FUNCTION ----------
+  ServiceFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+
+  ServiceFunction:
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W58
+            reason: CWL permissions granted by use of AWSLambdaBasicExecutionRole
+          - id: W89
+            reason: No requirement for this function to be in a VPC
+          - id: W92
+            reason: No requirement to limit simultaneous executions
+    Type: AWS::Lambda::Function
+    Properties:
+      Description: Service Lambda function
+      Runtime: python3.12
+      Timeout: 10
+      Role: !GetAtt ServiceFunctionRole.Arn
+      Handler: index.lambda_handler
+      Code:
+        ZipFile: |-
+          import json
+          import logging
+          import os
+
+          log = logging.getLogger("handler")
+          log.setLevel(logging.INFO)
+
+          def lambda_handler(event, context):
+              try:
+                  # Obtain AWS Region where the Lambda function is located
+                  region = os.environ.get('AWS_REGION')
+                  # Log the event received
+                  log.info("Received event: %s", json.dumps(event))
+
+                  # Return value
+                  response = region
+                  return {
+                      "statusCode": 200,
+                      "statusDescription": "200 OK",
+                      "body": response
+                  }
+
+              except Exception as e:
+                  log.exception("whoops")
+                  log.info(e)
+
+                  # Return exception error
+                  return {
+                      "statusCode": 500,
+                      "statusDescription": "500 Internal Server Error",
+                      "body": "Server error - check lambda logs\n"
+                  }
+
+  # ----------- CUSTOM RESOURCE: OBTAINING SHARE PARAMETER (CROSS-ACCOUNT EVENT BUS ARN) ----------
+  TestGetParameterServiceNetwork:
+    Type: Custom::GetParameter
+    DependsOn:
+      - TestGetParameterLogGroup
+    Properties:
+      ServiceToken: !GetAtt TestGetParameterFunction.Arn
+      ParameterName: !Ref ServiceNetworkParameterName
+
+  TestGetParameterFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: AllowDescribeOrganization
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ssm:DescribeParameters
+                  - ssm:GetParameter
+                Resource:
+                  - "*"
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+
+  TestGetParameterLogGroup:
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W84
+            reason: Encryption not required for this log group
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: '/aws/lambda/TestGetParameterFunction'
+      RetentionInDays: 7
+  
+  TestGetParameterFunction:
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W58
+            reason: CWL permissions granted by use of AWSLambdaBasicExecutionRole
+          - id: W89
+            reason: No requirement for this function to be in a VPC
+          - id: W92
+            reason: No requirement to limit simultaneous executions
+    Type: AWS::Lambda::Function
+    Properties:
+      Description: Get AWS Systems Manager Parameter (Shared)
+      Runtime: python3.12
+      Timeout: 10
+      Role: !GetAtt TestGetParameterFunctionRole.Arn
+      Handler: index.lambda_handler
+      Code:
+        ZipFile: |-
+          import logging
+          import boto3
+          import json
+          import cfnresponse
+          from botocore.exceptions import ClientError
+
+          log = logging.getLogger("handler")
+          log.setLevel(logging.INFO)
+
+          ssm = boto3.client('ssm')
+
+          def lambda_handler(event, context):
+              try:
+                  log.info("Received event: %s", json.dumps(event))
+                  request_type = event['RequestType']
+                  response = {}
+
+                  if request_type == 'Create':
+                    parameter_name = event["ResourceProperties"]['ParameterName']
+                    response = {}
+
+                    parameters_local = ssm.describe_parameters(
+                      Filters=[
+                        {
+                          'Key': 'Name',
+                          'Values': [
+                            parameter_name,
+                          ]
+                        },
+                      ],
+                      MaxResults=5,
+                      Shared=False
+                    )['Parameters']
+
+                    parameters_shared = ssm.describe_parameters(
+                      Filters=[
+                        {
+                          'Key': 'Name',
+                          'Values': [
+                            parameter_name,
+                          ]
+                        },
+                      ],
+                      MaxResults=5,
+                      Shared=True
+                    )['Parameters']
+
+                    parameters = parameters_local + parameters_shared
+                    value = ssm.get_parameter(
+                        Name=parameters[0]['ARN']
+                    )['Parameter']['Value']
+
+                    response['Value'] = value
+                  
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, response)
+                  
+              except:
+                log.exception("whoops")
+                cfnresponse.send(
+                    event,
+                    context,
+                    cfnresponse.FAILED,
+                    {},
+                    reason="Caught exception, check logs",
+                )

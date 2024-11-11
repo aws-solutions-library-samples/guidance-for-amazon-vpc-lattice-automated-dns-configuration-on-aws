@@ -1,0 +1,187 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Test - Networking Account. Guidance for VPC Lattice automated DNS configuration on AWS
+
+Parameters:
+  HostedZoneName:
+    Type: String
+    Description: Private Hosted Zone name
+  ServiceNetworkParameterName: 
+    Type: String
+    Description: SSM parameter name for service network VPC ID
+    Default: test_service_network
+  R53ProfileParameterName: 
+    Type: String
+    Description: SSM parameter name for Route 53 profile ID
+    Default: test_route53_profile
+
+Resources:
+  # ----------- AMAZON VPC LATTICE SERVICE NETWORK -----------
+  VPCLatticeServiceNetwork:
+    Type: AWS::VpcLattice::ServiceNetwork
+    Properties:
+      AuthType: NONE
+      Name: service-network
+
+  # ----------- AMAZON ROUTE 53 -----------
+  # Route 53 Profile
+  Route53Profile:
+    Type: AWS::Route53Profiles::Profile
+    Properties:
+      Name: r53-profile
+  
+  # Route 53 Private Hosted Zone
+  PrivateHostedZone:
+    Type: AWS::Route53::HostedZone
+    Properties:
+      Name: !Ref HostedZoneName
+      VPCs: 
+        - VpcId: !Ref MockVPC
+          VpcRegion: !Ref AWS::Region
+
+  # Mock VPC
+  MockVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/24
+      Tags: 
+        - Key: Name
+          Value: mock-vpc
+
+  # Route 53 Profile PHZ association
+  ProfilePHZAssociation:
+    Type: AWS::Route53Profiles::ProfileResourceAssociation
+    Properties:
+      Name: phz-association
+      ProfileId: !Ref Route53Profile
+      ResourceArn: !Sub arn:aws:route53:::hostedzone/${PrivateHostedZone}
+  
+  # ---------- SYSTEMS MANAGER PARAMETERS (SERVICE NETWORK & ROUTE 53 PROFILE) ----------
+  ServiceNetworkParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Ref ServiceNetworkParameterName
+      Type: String
+      Value: !GetAtt VPCLatticeServiceNetwork.Arn
+      DataType: text
+      Tier: Advanced
+  
+  R53ProfileParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Ref R53ProfileParameterName
+      Type: String
+      Value: !Ref Route53Profile
+      DataType: text
+      Tier: Advanced
+
+  # ---------- AWS RAM - SHARING PARAMETER WITH AWS ORGANIZATION ----------
+  RAMResourceShare:
+    Type: AWS::RAM::ResourceShare
+    Properties:
+      Name: test_networking_resources
+      AllowExternalPrincipals: false
+      Principals: 
+        - !GetAtt TestGetOrganization.Arn
+      ResourceArns: 
+        - !GetAtt VPCLatticeServiceNetwork.Arn
+        - !GetAtt Route53Profile.Arn
+        - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${ServiceNetworkParameter}
+        - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${R53ProfileParameter}
+
+  # ----------- CUSTOM RESOURCE: OBTAINING ORGANIZATION ID ----------
+  TestGetOrganization:
+    Type: Custom::GetOrganization
+    DependsOn:
+      - TestGetOrganizationLogGroup
+    Properties:
+      ServiceToken: !GetAtt TestGetOrganizationFunction.Arn
+
+  # IAM Role (Describe Organization)
+  TestGetOrganizationFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: AllowDescribeOrganization
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - organizations:DescribeOrganization
+                Resource:
+                  - "*"
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+
+  TestGetOrganizationLogGroup:
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W84
+            reason: Encryption not required for this log group
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: '/aws/lambda/TestGetOrganizationFunction'
+      RetentionInDays: 7
+  
+  TestGetOrganizationFunction:
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W58
+            reason: CWL permissions granted by use of AWSLambdaBasicExecutionRole
+          - id: W89
+            reason: No requirement for this function to be in a VPC
+          - id: W92
+            reason: No requirement to limit simultaneous executions
+    Type: AWS::Lambda::Function
+    Properties:
+      Description: Get AWS Organization Information
+      Runtime: python3.12
+      Timeout: 10
+      Role: !GetAtt TestGetOrganizationFunctionRole.Arn
+      Handler: index.lambda_handler
+      Code:
+        ZipFile: |-
+          import logging
+          import boto3
+          import json
+          import cfnresponse
+          from botocore.exceptions import ClientError
+
+          log = logging.getLogger("handler")
+          log.setLevel(logging.INFO)
+
+          org = boto3.client('organizations')
+
+          def lambda_handler(event, context):
+              try:
+                  log.info("Received event: %s", json.dumps(event))
+                  request_type = event['RequestType']
+                  response = {}
+
+                  if request_type == 'Create':
+                    org_info = org.describe_organization()
+                    response['Id'] = org_info['Organization']['Id']
+                    response['Arn'] = org_info['Organization']['Arn']
+                  
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, response)
+                  
+              except:
+                  log.exception("whoops")
+                  cfnresponse.send(
+                      event,
+                      context,
+                      cfnresponse.FAILED,
+                      {},
+                      reason="Caught exception, check logs",
+                  )
