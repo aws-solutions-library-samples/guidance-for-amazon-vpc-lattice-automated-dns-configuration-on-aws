@@ -138,7 +138,26 @@ resource "aws_sfn_state_machine" "sfn_phz" {
                 "Next": "ServiceDeleted"
               }
             ],
-            "Default": "DoNothing"
+            "Default": "ChangeResourceRecordSets"
+          },
+          "ChangeResourceRecordSets": {
+            "Type": "Task",
+            "Parameters": {
+              "ChangeBatch": {
+                "Changes": [
+                  {
+                    "Action": "MyData",
+                    "ResourceRecordSet": {
+                      "Name": "MyData",
+                      "Type": "MyData"
+                    }
+                  }
+                ]
+              },
+              "HostedZoneId": "MyData"
+            },
+            "Resource": "arn:aws:states:::aws-sdk:route53:changeResourceRecordSets",
+            "Next": "DoNothing"
           },
           "ServiceDeleted": {
             "Type": "Parallel",
@@ -243,6 +262,35 @@ resource "aws_sfn_state_machine" "sfn_phz" {
     "ServiceCreated": {
       "Type": "Parallel",
       "Branches": [
+        {
+          "StartAt": "ChangeResourceRecordSetsAAAA",
+          "States": {
+            "ChangeResourceRecordSetsAAAA": {
+              "Type": "Task",
+              "Parameters": {
+                "ChangeBatch": {
+                  "Changes": [
+                    {
+                      "Action": "UPSERT",
+                      "ResourceRecordSet": {
+                        "Name.$": "$.detail.CustomDomainName",
+                        "Type": "AAAA",
+                        "AliasTarget": {
+                          "HostedZoneId.$": "$.detail.DnsEntry.HostedZoneId",
+                          "DnsName.$": "$.detail.DnsEntry.DomainName",
+                          "EvaluateTargetHealth": false
+                        }
+                      }
+                    }
+                  ]
+                },
+                "HostedZoneId": "${var.phz_id}"
+              },
+              "Resource": "arn:aws:states:::aws-sdk:route53:changeResourceRecordSets",
+              "End": true
+            }
+          }
+        },
         {
           "StartAt": "CreateResourceRecordSet",
           "States": {

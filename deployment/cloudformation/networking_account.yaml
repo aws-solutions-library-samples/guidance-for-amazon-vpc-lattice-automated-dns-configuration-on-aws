@@ -172,7 +172,26 @@ Resources:
                         "Next": "ServiceDeleted"
                       }
                     ],
-                    "Default": "DoNothing"
+                    "Default": "ChangeResourceRecordSets"
+                  },
+                  "ChangeResourceRecordSets": {
+                    "Type": "Task",
+                    "Parameters": {
+                      "ChangeBatch": {
+                        "Changes": [
+                          {
+                            "Action": "MyData",
+                            "ResourceRecordSet": {
+                              "Name": "MyData",
+                              "Type": "MyData"
+                            }
+                          }
+                        ]
+                      },
+                      "HostedZoneId": "MyData"
+                    },
+                    "Resource": "arn:aws:states:::aws-sdk:route53:changeResourceRecordSets",
+                    "Next": "DoNothing"
                   },
                   "ServiceDeleted": {
                     "Type": "Parallel",
@@ -277,6 +296,35 @@ Resources:
             "ServiceCreated": {
               "Type": "Parallel",
               "Branches": [
+                {
+                  "StartAt": "ChangeResourceRecordSetsAAAA",
+                  "States": {
+                    "ChangeResourceRecordSetsAAAA": {
+                      "Type": "Task",
+                      "Parameters": {
+                        "ChangeBatch": {
+                          "Changes": [
+                            {
+                              "Action": "UPSERT",
+                              "ResourceRecordSet": {
+                                "Name.$": "$.detail.CustomDomainName",
+                                "Type": "AAAA",
+                                "AliasTarget": {
+                                  "HostedZoneId.$": "$.detail.DnsEntry.HostedZoneId",
+                                  "DnsName.$": "$.detail.DnsEntry.DomainName",
+                                  "EvaluateTargetHealth": false
+                                }
+                              }
+                            }
+                          ]
+                        },
+                        "HostedZoneId": "${phz}"
+                      },
+                      "Resource": "arn:aws:states:::aws-sdk:route53:changeResourceRecordSets",
+                      "End": true
+                    }
+                  }
+                },
                 {
                   "StartAt": "CreateResourceRecordSet",
                   "States": {
@@ -464,11 +512,13 @@ Resources:
           def lambda_handler(event, context):
               try:
                   log.info("Received event: %s", json.dumps(event))
+                  request_type = event['RequestType']
                   response = {}
 
-                  org_info = org.describe_organization()
-                  response['Id'] = org_info['Organization']['Id']
-                  response['Arn'] = org_info['Organization']['Arn']
+                  if request_type == 'Create':
+                    org_info = org.describe_organization()
+                    response['Id'] = org_info['Organization']['Id']
+                    response['Arn'] = org_info['Organization']['Arn']
                   
                   cfnresponse.send(event, context, cfnresponse.SUCCESS, response)
                   

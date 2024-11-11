@@ -341,27 +341,30 @@ Resources:
           def lambda_handler(event, context):
               try:
                   log.info("Received event: %s", json.dumps(event))
-                  parameter_name = event["ResourceProperties"]['ParameterName']
+                  request_type = event['RequestType']
                   response = {}
 
-                  parameter_arn = ssm.describe_parameters(
-                    Filters=[
-                      {
-                        'Key': 'Name',
-                        'Values': [
-                          parameter_name,
-                        ]
-                      },
-                    ],
-                    MaxResults=5,
-                    Shared=True|False
-                  )['Parameters'][0]['ARN']
-                  
-                  value = ssm.get_parameter(
-                      Name=parameter_arn
-                  )['Parameter']['Value']
+                  if request_type == 'Create':
+                    parameter_name = event["ResourceProperties"]['ParameterName']
 
-                  response['Value'] = value
+                    parameter_arn = ssm.describe_parameters(
+                      Filters=[
+                        {
+                          'Key': 'Name',
+                          'Values': [
+                            parameter_name,
+                          ]
+                        },
+                      ],
+                      MaxResults=5,
+                      Shared=True
+                    )['Parameters'][0]['ARN']
+                    
+                    value = ssm.get_parameter(
+                        Name=parameter_arn
+                    )['Parameter']['Value']
+
+                    response['Value'] = value
                   
                   cfnresponse.send(event, context, cfnresponse.SUCCESS, response)
                   
