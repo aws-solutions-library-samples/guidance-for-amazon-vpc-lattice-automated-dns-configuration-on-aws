@@ -138,26 +138,7 @@ resource "aws_sfn_state_machine" "sfn_phz" {
                 "Next": "ServiceDeleted"
               }
             ],
-            "Default": "ChangeResourceRecordSets"
-          },
-          "ChangeResourceRecordSets": {
-            "Type": "Task",
-            "Parameters": {
-              "ChangeBatch": {
-                "Changes": [
-                  {
-                    "Action": "MyData",
-                    "ResourceRecordSet": {
-                      "Name": "MyData",
-                      "Type": "MyData"
-                    }
-                  }
-                ]
-              },
-              "HostedZoneId": "MyData"
-            },
-            "Resource": "arn:aws:states:::aws-sdk:route53:changeResourceRecordSets",
-            "Next": "DoNothing"
+            "Default": "DoNothing"
           },
           "ServiceDeleted": {
             "Type": "Parallel",

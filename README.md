@@ -86,7 +86,7 @@ Figure 1. VPC Lattice automated DNS configuration on AWS - Reference Architectur
 
 ### Cost 
 
-You are responsible for the cost of the AWS services deployed while running this guidance. As of August 2024, the cost of running this Guidance with default settings lies within the Free Tier, except for the use of AWS Systems Manager Advanced Paramter storage.
+You are responsible for the cost of the AWS services deployed while running this guidance. As of November 2024, the cost of running this Guidance with default settings lies within the Free Tier, except for the use of AWS Systems Manager Advanced Paramter storage.
 
 We recommend creating a [budget](https://docs.aws.amazon.com/cost-management/latest/userguide/budgets-create.html) through [AWS Cost Explorer](http://aws.amazon.com/aws-cost-management/aws-cost-explorer/) to help manage costs. Prices are subject to change. You can also estimate the cost for your architecture solution using [AWS Pricing Calculator](https://calculator.aws/#/). For full details, refer to the pricing webpage for each AWS service used in this Guidance or visit [Pricing by AWS Service](#pricing-by-aws-service).
 
@@ -99,7 +99,7 @@ This breakdown of the costs of the Networking Account shows that the highest cos
 | AWS Systems Manager | 1 advanced parameter | \$ 0.05 |
 | Amazon EventBridge  | <= 1 million custom events | \$ 1.00 |
 | AWS Step Functions  | < 4,000 state transitions | \$ 0.00 |
-| Amazon SQS          | <= 1 million requests/month | \$ 0.00 |
+| Amazon SQS          | < 1 million requests/month | \$ 0.00 |
 | **TOTAL estimate** |  | **\$ 1.05/month** |
 
 **Estimated monthly cost breakdown - Spoke Accounts**
@@ -134,7 +134,7 @@ This Guidance uses [AWS Serverless](https://aws.amazon.com/serverless/) managed 
 
 ### Third-party tools
 
-For this solution you can either use [AWS CloudFormation](https://aws.amazon.com/cloudformation/) or [Terraform](https://www.terraform.io/) as an Infrastructure-as-Code provider. **For Terraform, check the requirements below**.
+For this solution you can either use [AWS CloudFormation](https://aws.amazon.com/cloudformation/) or [Hashicorp Terraform](https://www.terraform.io/) as an Infrastructure-as-Code provider. **For Terraform, check the requirements below**.
 
 You will need Terraform installed to deploy. These instructions were tested with Terraform version `1.9.3`. You can install Terraform following [Hashicorp's documentation](https://developer.hashicorp.com/terraform/tutorials/aws-get-started/install-cli). In addition, AWS credentials need to be configured according to the [Terraform AWS Provider documentation](https://registry.terraform.io/providers/-/aws/latest/docs#authentication-and-configuration). 
 
