@@ -1,0 +1,533 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Guidance for VPC Lattice automated DNS configuration on AWS (SO9532)
+
+Parameters:
+  PrivateHostedZone:
+    Type: String
+    Description: Private Hosted Zone ID
+  ParameterName:
+    Type: String
+    Description: Systems Manager Parameter name
+    Default: automation_resource
+
+Resources:
+  # ---------- EVENTBRIDGE EVENT BUS (CROSS-ACCOUNT SHARING) ----------
+  # Event bus
+  EventBusCrossAccount:
+    Type: AWS::Events::EventBus
+    Properties:
+      Name: cross_account_eventbus
+
+  # Event bus policy
+  EventBusCrossAccountPolicy:
+    Type: "AWS::Events::EventBusPolicy"
+    Properties:
+      StatementId: "AllowOrgAccess"
+      EventBusName: !Ref EventBusCrossAccount
+      Action: events:PutEvents
+      Principal: "*"
+      Condition: 
+        Key: aws:PrincipalOrgID
+        Type: StringEquals
+        Value: !GetAtt GetOrganization.Id
+  
+  # Event rule
+  EventRuleCrossAccount:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: VpcLattice_Information
+      EventBusName: !GetAtt EventBusCrossAccount.Arn
+      EventPattern:
+        source:
+          - "vpclattice_information"
+      State: "ENABLED"
+      Targets:
+        - Id: SendToStepFunctions
+          Arn: !Ref StepFunctionsDNSConfiguration
+          RoleArn: !GetAtt EventBridgeTargetRole.Arn
+          RetryPolicy:
+            MaximumEventAgeInSeconds: 60
+            MaximumRetryAttempts: 5
+          DeadLetterConfig:
+            Arn: !GetAtt DeadLetterQueue.Arn
+  
+  # IAM Role/Policy (EventBridge Target)
+  EventBridgeTargetRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: EventTargetRole
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service:
+                - !Sub events.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns: 
+        - !Ref EventBridgeTargetPolicy
+
+  EventBridgeTargetPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: EventTargetPolicy
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action:
+              - states:StartExecution
+            Resource:
+              - !Ref StepFunctionsDNSConfiguration
+
+  # SQS queue
+  DeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: deadletter-queue
+      SqsManagedSseEnabled: true
+
+  # ---------- AWS SYSTEMS MANAGER PARAMETER: EVENTBRIDGE EVENT BUS (CROSS-ACCOUNT) ----------
+  AutomationResourceParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Ref ParameterName
+      Type: String
+      Value: !GetAtt EventBusCrossAccount.Arn
+      DataType: text
+      Tier: Advanced
+
+  # ---------- AWS RAM - SHARING PARAMETER WITH AWS ORGANIZATION ----------
+  RAMResourceShare:
+    Type: AWS::RAM::ResourceShare
+    Properties:
+      Name: automation_networking_resource
+      AllowExternalPrincipals: false
+      Principals: 
+        - !GetAtt GetOrganization.Arn
+      ResourceArns: 
+        - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${AutomationResourceParameter}
+
+  # ---------- STEP FUNCTIONS (UPDATING PRIVATE HOSTED ZONE RECORD) ----------
+  StepFunctionsDNSConfiguration:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineName: phz-configuration
+      RoleArn: !GetAtt StepFunctionsRole.Arn
+      StateMachineType: "STANDARD"
+      LoggingConfiguration: 
+        IncludeExecutionData: true
+        Level: "ERROR"
+        Destinations: 
+          - CloudWatchLogsLogGroup:
+              LogGroupArn: !GetAtt StepFunctionsLogGroup.Arn
+      DefinitionSubstitutions:
+        phz: !Ref PrivateHostedZone
+      DefinitionString: |
+        {
+          "Comment": "A description of my state machine",
+          "StartAt": "Choice",
+          "States": {
+            "Choice": {
+              "Type": "Choice",
+              "Choices": [
+                {
+                  "Variable": "$.detail-type",
+                  "StringEquals": "ServiceCreated",
+                  "Next": "ServiceCreated"
+                },
+                {
+                  "Variable": "$.detail-type",
+                  "StringEquals": "ServiceDeleted",
+                  "Next": "ListTagsForResource"
+                }
+              ],
+              "Default": "Pass"
+            },
+            "ListTagsForResource": {
+              "Type": "Task",
+              "Parameters": {
+                "ResourceId": "${phz}",
+                "ResourceType": "hostedzone"
+              },
+              "Resource": "arn:aws:states:::aws-sdk:route53:listTagsForResource",
+              "ResultPath": "$.tags",
+              "Next": "CheckTags"
+            },
+            "CheckTags": {
+              "Type": "Map",
+              "ItemProcessor": {
+                "ProcessorConfig": {
+                  "Mode": "INLINE"
+                },
+                "StartAt": "TagFound",
+                "States": {
+                  "TagFound": {
+                    "Type": "Choice",
+                    "Choices": [
+                      {
+                        "Variable": "$.serviceArn",
+                        "StringEqualsPath": "$.tag.Key",
+                        "Next": "ServiceDeleted"
+                      }
+                    ],
+                    "Default": "ChangeResourceRecordSets"
+                  },
+                  "ChangeResourceRecordSets": {
+                    "Type": "Task",
+                    "Parameters": {
+                      "ChangeBatch": {
+                        "Changes": [
+                          {
+                            "Action": "MyData",
+                            "ResourceRecordSet": {
+                              "Name": "MyData",
+                              "Type": "MyData"
+                            }
+                          }
+                        ]
+                      },
+                      "HostedZoneId": "MyData"
+                    },
+                    "Resource": "arn:aws:states:::aws-sdk:route53:changeResourceRecordSets",
+                    "Next": "DoNothing"
+                  },
+                  "ServiceDeleted": {
+                    "Type": "Parallel",
+                    "Branches": [
+                      {
+                        "StartAt": "ListResourceRecordSets",
+                        "States": {
+                          "ListResourceRecordSets": {
+                            "Type": "Task",
+                            "Parameters": {
+                              "HostedZoneId": "${phz}"
+                            },
+                            "Resource": "arn:aws:states:::aws-sdk:route53:listResourceRecordSets",
+                            "ResultPath": "$.records",
+                            "Next": "CheckRecords"
+                          },
+                          "CheckRecords": {
+                            "Type": "Map",
+                            "ItemProcessor": {
+                              "ProcessorConfig": {
+                                "Mode": "INLINE"
+                              },
+                              "StartAt": "RecordFound",
+                              "States": {
+                                "RecordFound": {
+                                  "Type": "Choice",
+                                  "Choices": [
+                                    {
+                                      "Variable": "$.recordName",
+                                      "StringEqualsPath": "$.resourceRecord.Name",
+                                      "Next": "DeleteResourceRecordSet"
+                                    }
+                                  ],
+                                  "Default": "NoAction"
+                                },
+                                "DeleteResourceRecordSet": {
+                                  "Type": "Task",
+                                  "Parameters": {
+                                    "ChangeBatch": {
+                                      "Changes": [
+                                        {
+                                          "Action": "DELETE",
+                                          "ResourceRecordSet.$": "$.resourceRecord"
+                                        }
+                                      ]
+                                    },
+                                    "HostedZoneId": "${phz}"
+                                  },
+                                  "Resource": "arn:aws:states:::aws-sdk:route53:changeResourceRecordSets",
+                                  "End": true
+                                },
+                                "NoAction": {
+                                  "Type": "Pass",
+                                  "End": true
+                                }
+                              }
+                            },
+                            "End": true,
+                            "ItemsPath": "$.records.ResourceRecordSets",
+                            "ItemSelector": {
+                              "recordName.$": "States.Format('{}.',$.tag.Value)",
+                              "resourceRecord.$": "$$.Map.Item.Value"
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "StartAt": "DeleteTag",
+                        "States": {
+                          "DeleteTag": {
+                            "Type": "Task",
+                            "Parameters": {
+                              "ResourceId": "${phz}",
+                              "ResourceType": "hostedzone",
+                              "RemoveTagKeys.$": "States.Array($.tag.Key)"
+                            },
+                            "Resource": "arn:aws:states:::aws-sdk:route53:changeTagsForResource",
+                            "End": true
+                          }
+                        }
+                      }
+                    ],
+                    "End": true
+                  },
+                  "DoNothing": {
+                    "Type": "Pass",
+                    "End": true
+                  }
+                }
+              },
+              "End": true,
+              "ItemsPath": "$.tags.ResourceTagSet.Tags",
+              "ItemSelector": {
+                "serviceArn.$": "$.detail.ServiceArn",
+                "tag.$": "$$.Map.Item.Value"
+              }
+            },
+            "Pass": {
+              "Type": "Pass",
+              "End": true
+            },
+            "ServiceCreated": {
+              "Type": "Parallel",
+              "Branches": [
+                {
+                  "StartAt": "ChangeResourceRecordSetsAAAA",
+                  "States": {
+                    "ChangeResourceRecordSetsAAAA": {
+                      "Type": "Task",
+                      "Parameters": {
+                        "ChangeBatch": {
+                          "Changes": [
+                            {
+                              "Action": "UPSERT",
+                              "ResourceRecordSet": {
+                                "Name.$": "$.detail.CustomDomainName",
+                                "Type": "AAAA",
+                                "AliasTarget": {
+                                  "HostedZoneId.$": "$.detail.DnsEntry.HostedZoneId",
+                                  "DnsName.$": "$.detail.DnsEntry.DomainName",
+                                  "EvaluateTargetHealth": false
+                                }
+                              }
+                            }
+                          ]
+                        },
+                        "HostedZoneId": "${phz}"
+                      },
+                      "Resource": "arn:aws:states:::aws-sdk:route53:changeResourceRecordSets",
+                      "End": true
+                    }
+                  }
+                },
+                {
+                  "StartAt": "CreateResourceRecordSet",
+                  "States": {
+                    "CreateResourceRecordSet": {
+                      "Type": "Task",
+                      "Parameters": {
+                        "ChangeBatch": {
+                          "Changes": [
+                            {
+                              "Action": "UPSERT",
+                              "ResourceRecordSet": {
+                                "Name.$": "$.detail.CustomDomainName",
+                                "Type": "A",
+                                "AliasTarget": {
+                                  "HostedZoneId.$": "$.detail.DnsEntry.HostedZoneId",
+                                  "DnsName.$": "$.detail.DnsEntry.DomainName",
+                                  "EvaluateTargetHealth": false
+                                }
+                              }
+                            }
+                          ]
+                        },
+                        "HostedZoneId": "${phz}"
+                      },
+                      "Resource": "arn:aws:states:::aws-sdk:route53:changeResourceRecordSets",
+                      "End": true
+                    }
+                  }
+                },
+                {
+                  "StartAt": "CreateTag",
+                  "States": {
+                    "CreateTag": {
+                      "Type": "Task",
+                      "Parameters": {
+                        "ResourceId": "${phz}",
+                        "ResourceType": "hostedzone",
+                        "AddTags": [
+                          {
+                            "Key.$": "$.detail.Arn",
+                            "Value.$": "$.detail.CustomDomainName"
+                          }
+                        ]
+                      },
+                      "Resource": "arn:aws:states:::aws-sdk:route53:changeTagsForResource",
+                      "End": true
+                    }
+                  }
+                }
+              ],
+              "End": true
+            }
+          }
+        }
+  
+  # IAM Role/Policy (Step Functions state machine)
+  StepFunctionsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: StepFunctionsRole
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service:
+                - !Sub states.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns: 
+        - !Ref StepFunctionsPolicy
+
+  StepFunctionsPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: StepFunctionsPolicy
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action:
+              - route53:ListTagsForResource
+              - route53:ListResourceRecordSets
+              - route53:ChangeTagsForResource
+              - route53:ChangeResourceRecordSets
+            Resource:
+              - !Sub arn:aws:route53:::hostedzone/${PrivateHostedZone}
+          - Effect: Allow
+            Action:
+              - logs:UpdateLogDelivery
+              - logs:PutResourcePolicy
+              - logs:PutLogEvents
+              - logs:ListLogDeliveries
+              - logs:GetLogDelivery
+              - logs:DescribeResourcePolicies
+              - logs:DescribeLogGroups
+              - logs:DeleteLogDelivery
+              - logs:CreateLogStream
+              - logs:CreateLogDelivery
+            Resource:
+              - "*"
+  
+  # ---------- AMAZON CLOUDWATCH LOG GROUP ----------
+  StepFunctionsLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/vendedlogs/states/
+      RetentionInDays: 30
+  
+  # ----------- CUSTOM RESOURCE: OBTAINING ORGANIZATION ID ----------
+  GetOrganization:
+    Type: Custom::GetOrganization
+    DependsOn:
+      - GetOrganizationLogGroup
+    Properties:
+      ServiceToken: !GetAtt GetOrganizationFunction.Arn
+
+  # IAM Role (Describe Organization)
+  GetOrganizationFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: AllowDescribeOrganization
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - organizations:DescribeOrganization
+                Resource:
+                  - "*"
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+
+  GetOrganizationLogGroup:
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W84
+            reason: Encryption not required for this log group
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: '/aws/lambda/GetOrganizationFunction'
+      RetentionInDays: 7
+  
+  GetOrganizationFunction:
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W58
+            reason: CWL permissions granted by use of AWSLambdaBasicExecutionRole
+          - id: W89
+            reason: No requirement for this function to be in a VPC
+          - id: W92
+            reason: No requirement to limit simultaneous executions
+    Type: AWS::Lambda::Function
+    Properties:
+      Description: Get AWS Organization Information
+      Runtime: python3.12
+      Timeout: 10
+      Role: !GetAtt GetOrganizationFunctionRole.Arn
+      Handler: index.lambda_handler
+      Code:
+        ZipFile: |-
+          import logging
+          import boto3
+          import json
+          import cfnresponse
+          from botocore.exceptions import ClientError
+
+          log = logging.getLogger("handler")
+          log.setLevel(logging.INFO)
+
+          org = boto3.client('organizations')
+
+          def lambda_handler(event, context):
+              try:
+                  log.info("Received event: %s", json.dumps(event))
+                  request_type = event['RequestType']
+                  response = {}
+
+                  if request_type == 'Create':
+                    org_info = org.describe_organization()
+                    response['Id'] = org_info['Organization']['Id']
+                    response['Arn'] = org_info['Organization']['Arn']
+                  
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, response)
+                  
+              except:
+                  log.exception("whoops")
+                  cfnresponse.send(
+                      event,
+                      context,
+                      cfnresponse.FAILED,
+                      {},
+                      reason="Caught exception, check logs",
+                  )

@@ -1,0 +1,303 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Test - Consumer Account. Guidance for VPC Lattice automated DNS configuration on AWS
+Transform: 'AWS::LanguageExtensions'
+
+Parameters:
+  ServiceNetworkParameterName: 
+    Type: String
+    Description: SSM parameter name for service network VPC ID
+    Default: test_service_network
+  R53ProfileParameterName: 
+    Type: String
+    Description: SSM parameter name for Route 53 profile ID
+    Default: test_route53_profile
+  LatestAmiId:
+    Description: Latest Amazon Linux 2023 AMI
+    Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+    Default: '/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64'
+
+Mappings:
+  VPC:
+    CIDR: 
+      Block: 10.0.0.0/24
+    Subnets: 
+      PrivateSubneta: 10.0.0.0/28
+      PrivateSubnetb: 10.0.0.16/28
+      EndpointsSubneta: 10.0.0.32/28
+      EndpointsSubnetb: 10.0.0.48/28
+
+Resources:
+  # ----------- CONSUMER VPC ----------
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties: 
+      CidrBlock: !FindInMap [VPC, CIDR, Block]
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags: 
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - vpc
+              - !Ref AWS::StackName  
+
+  # For::Each iteration: per subnet type (Private, Transit, Endpoints) and AZ (2 AZs)
+  # Resources to create: 6 subnets, 6 route tables, 6 route table associations - obtaining AZ affinity
+  'Fn::ForEach::SubnetTypes':
+    - SubnetType
+    - [Private, Endpoints]
+    - '${SubnetType}':
+      'Fn::ForEach::AZ':
+        - AvailabilityZone
+        - [a, b]
+          # Subnets
+        - '${SubnetType}Subnet${AvailabilityZone}':
+            Type: AWS::EC2::Subnet
+            Properties:
+              VpcId: !Ref VPC
+              AvailabilityZone: !Sub ${AWS::Region}${AvailabilityZone}
+              CidrBlock: !FindInMap 
+                - VPC
+                - Subnets
+                - !Sub ${SubnetType}Subnet${AvailabilityZone}
+              Tags:
+                - Key: Name
+                  Value: !Join
+                    - '-'
+                    - - !Sub subnet-${SubnetType}-AZ${AvailabilityZone}
+                      - !Ref AWS::StackName
+          # Route Tables
+          '${SubnetType}RouteTable${AvailabilityZone}':
+            Type: AWS::EC2::RouteTable
+            Properties:
+              VpcId: !Ref VPC
+              Tags: 
+                - Key: Name
+                  Value: !Join
+                    - '-'
+                    - - !Sub rt-${SubnetType}-AZ${AvailabilityZone}
+                      - !Ref AWS::StackName
+          # Route Table associations
+          '${SubnetType}RouteTableAssociation${AvailabilityZone}':
+            Type: AWS::EC2::SubnetRouteTableAssociation
+            Properties: 
+              RouteTableId: !Ref
+                'Fn::Sub': '${SubnetType}RouteTable${AvailabilityZone}'
+              SubnetId: !Ref
+                'Fn::Sub': '${SubnetType}Subnet${AvailabilityZone}'
+
+  # VPC Lattice VPC association
+  VPCLatticeVPCAssociation:
+    Type: AWS::VpcLattice::ServiceNetworkVpcAssociation
+    Properties:
+      ServiceNetworkIdentifier: !GetAtt GetParameterServiceNetwork.Value
+      VpcIdentifier: !Ref VPC
+
+  # Security Groups (Instances and EC2 Instance Connect endpoint)
+  InstanceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Instance Security Group
+      VpcId: !Ref VPC
+  
+  InstanceSecurityGroupIngressEIC:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref InstanceSecurityGroup
+      Description: Allowing EIC traffic
+      IpProtocol: tcp
+      FromPort: 22
+      ToPort: 22
+      SourceSecurityGroupId: !Ref EndpointSecurityGroup
+   
+  InstanceSecurityGroupEgressAll:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId: !Ref InstanceSecurityGroup
+      Description: Allowing egress traffic
+      IpProtocol: -1
+      CidrIp: 0.0.0.0/0
+
+  EndpointSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Endpoints Security Group
+      VpcId: !Ref VPC
+  
+  EndpointSecurityGroupEgressEIC:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId: !Ref EndpointSecurityGroup
+      Description: Allowing EIC traffic
+      IpProtocol: tcp
+      FromPort: 22
+      ToPort: 22
+      DestinationSecurityGroupId: !Ref InstanceSecurityGroup
+  
+  # ----------- AMAZON ROUTE 53 PROFILE VPC ASSOCIATION ----------
+  R53ProfileVPCAssociation:
+    Type: AWS::Route53Profiles::ProfileAssociation
+    Properties:
+      Name: vpc-association
+      ProfileId: !GetAtt GetParameterR53Profile.Value
+      ResourceId: !Ref VPC
+
+  # ----------- AMAZON EC2 INSTANCE ----------
+  # For::Each iteration: per Availability Zone. Resources to create: EC2 instances in each private subnet
+  'Fn::ForEach::EC2Instances':
+    - AvailabilityZone
+    - [a, b]
+    - 'EC2InstanceAZ${AvailabilityZone}':
+        Type: AWS::EC2::Instance
+        Properties:
+          SubnetId: !Ref
+            'Fn::Sub': 'PrivateSubnet${AvailabilityZone}'
+          InstanceType: t3.micro
+          SecurityGroupIds:
+            - !Ref InstanceSecurityGroup
+          ImageId: !Ref LatestAmiId
+          Tags:
+            - Key: Name
+              Value: !Join
+                - '-'
+                - - instance-az
+                  - !Ref AvailabilityZone
+
+  EC2InstanceConnectEndpoint:
+    Type: AWS::EC2::InstanceConnectEndpoint
+    Properties:
+      PreserveClientIp: false
+      SecurityGroupIds: 
+        - !Ref EndpointSecurityGroup
+      SubnetId: !Ref EndpointsSubneta
+      Tags: 
+        - Key: Name
+          Value: !Join
+            - '-'
+            - - endpoint-eic
+              - !Ref AWS::StackName
+
+  # ----------- CUSTOM RESOURCE: OBTAINING SHARE PARAMETER (CROSS-ACCOUNT EVENT BUS ARN) ----------
+  GetParameterServiceNetwork:
+    Type: Custom::GetParameter
+    DependsOn:
+      - GetParameterLogGroup
+    Properties:
+      ServiceToken: !GetAtt GetParameterFunction.Arn
+      ParameterName: !Ref ServiceNetworkParameterName
+  
+  GetParameterR53Profile:
+    Type: Custom::GetParameter
+    DependsOn:
+      - GetParameterLogGroup
+    Properties:
+      ServiceToken: !GetAtt GetParameterFunction.Arn
+      ParameterName: !Ref R53ProfileParameterName
+
+  GetParameterFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: AllowDescribeOrganization
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ssm:DescribeParameters
+                  - ssm:GetParameter
+                Resource:
+                  - "*"
+      ManagedPolicyArns:
+        - !Sub arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+
+  GetParameterLogGroup:
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W84
+            reason: Encryption not required for this log group
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: '/aws/lambda/GetParameterFunction'
+      RetentionInDays: 7
+  
+  GetParameterFunction:
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W58
+            reason: CWL permissions granted by use of AWSLambdaBasicExecutionRole
+          - id: W89
+            reason: No requirement for this function to be in a VPC
+          - id: W92
+            reason: No requirement to limit simultaneous executions
+    Type: AWS::Lambda::Function
+    Properties:
+      Description: Get AWS Systems Manager Parameter (Shared)
+      Runtime: python3.12
+      Timeout: 10
+      Role: !GetAtt GetParameterFunctionRole.Arn
+      Handler: index.lambda_handler
+      Code:
+        ZipFile: |-
+          import logging
+          import boto3
+          import json
+          import cfnresponse
+          from botocore.exceptions import ClientError
+
+          log = logging.getLogger("handler")
+          log.setLevel(logging.INFO)
+
+          ssm = boto3.client('ssm')
+
+          def lambda_handler(event, context):
+              try:
+                  log.info("Received event: %s", json.dumps(event))
+                  request_type = event['RequestType']
+                  response = {}
+
+                  if request_type == 'Create':
+                    parameter_name = event["ResourceProperties"]['ParameterName']
+                    response = {}
+
+                    parameter_arn = ssm.describe_parameters(
+                      Filters=[
+                        {
+                          'Key': 'Name',
+                          'Values': [
+                            parameter_name,
+                          ]
+                        },
+                      ],
+                      MaxResults=5,
+                      Shared=True
+                    )['Parameters'][0]['ARN']
+
+                    value = ssm.get_parameter(
+                        Name=parameter_arn
+                    )['Parameter']['Value']
+
+                    response['Value'] = value
+                  
+                  cfnresponse.send(event, context, cfnresponse.SUCCESS, response)
+                  
+              except:
+                log.exception("whoops")
+                cfnresponse.send(
+                    event,
+                    context,
+                    cfnresponse.FAILED,
+                    {},
+                    reason="Caught exception, check logs",
+                )
