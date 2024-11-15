@@ -54,31 +54,31 @@ Below is the Reference architecture diagram and workflow of the Guidance for VPC
 
 <div align="center">
 
-![picture](./assets/amazon-vpc-lattice-automated-dns-configuration-on-aws.png)
+![picture](./assets/vpc-lattice-dns-reference-architecture-updated.jpg)
 Figure 1. VPC Lattice automated DNS configuration on AWS - Reference Architecture
 </div>
 
-(**1**) When a new spoke Account creates a new VPC Lattice service, an [Amazon EventBridge](https://aws.amazon.com/eventbridge/) rule checks that the [VPC Lattice](https://aws.amazon.com/vpc/lattice/) service has been created with the proper tag. The EventBridge rule also checks if a VPC Lattice service has been deleted, from the deletion of such tag.
+(**1**) When a new spoke Account creates a new VPC Lattice service, an [Amazon EventBridge](https://aws.amazon.com/eventbridge/) rule checks that a new [VPC Lattice](https://aws.amazon.com/vpc/lattice/) service has been created with the proper tag. The EventBridge rule also checks whether a VPC Lattice service has been deleted, from the deletion of such tag.
 
-(**2**) The event is sent to an [AWS Step Functions](https://aws.amazon.com/step-functions/) state machine. Depending the action (creation or deletion), the state machine publishes an event to a custom event bus. In addition, for created resources with custom domain names, the state machine obtains the domain name configuration (VPC Lattice-generated domain name, VPC Lattice-managed hosted zone, and custom domain name).
+(**2**) The event is sent to the `Get VPC Lattice service information` [AWS Step Functions](https://aws.amazon.com/step-functions/) state machine. Depending the action (creation or deletion), the state machine publishes an event to a custom event bus. In addition, for created resources with custom domain names, the state machine obtains the domain name configuration (VPC Lattice-generated domain name, VPC Lattice-managed hosted zone, and custom domain name).
 
-(**3**) The custom event bus is configured with a target pointing to an event bus in the Networking Account.
+(**3**) The `vpclattice_information` custom Event Bus is configured with a target pointing to the `cross_account` Event Bus in the Networking Account.
 
-(**4**) Unsuccessfully processed events are stored in a [Amazon SQS dead-letter queue (DLQ)](https://aws.amazon.com/what-is/dead-letter-queue/) for monitoring.
+(**4**) Unsuccessfully processed delivery events are stored in the [Amazon SQS dead-letter queue (DLQ)](https://aws.amazon.com/what-is/dead-letter-queue/) in the Spoke Account for monitoring.
 
-(**5**) The custom event bus in the Networking Account invokes a Step Functions state machine to process the notification send by the spoke Account.
+(**5**) The `cross_account` custom Event Bus in the Networking Account invokes the `DNS configuration` Step Functions state machine to process the notification send by the Spoke Account.
 
-(**6**) Unsuccessfully processed events are stored in DLQ for monitoring.
+(**6**) Unsuccessfully processed delivery events are stored in the DLQ in the Networking Account for monitoring.
 
-(**7**) The state machine will create/delete the corresponding Alias record in the [Amazon Route 53](https://aws.amazon.com/route53/) private hosted zone.
+(**7**) The `DNS configuration` state machine will create/delete the corresponding Alias record in the [Amazon Route 53](https://aws.amazon.com/route53/) [Private Hosted Zone](https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/hosted-zones-private.html).
 
-(**8**) [AWS Systems Manager](https://aws.amazon.com/systems-manager/) and [AWS Resource Access Manager (AWS RAM)](https://aws.amazon.com/ram/) are used for parameter storage and cross-account data sharing.
+(**8**) [AWS Systems Manager](https://aws.amazon.com/systems-manager/) and [AWS Resource Access Manager (AWS RAM)](https://aws.amazon.com/ram/) are used for secure parameter storage and cross-account data sharing.
 
 ### AWS Services used in this Guidance
 
 | **AWS service**  | Role | Description | Service Availability |
 |-----------|------------|-------------|-------------|
-| [Amazon EventBridge](https://aws.amazon.com/eventbridge/)| Core service | Rules and custom event buses are used for notifying and detecting new resources.| [Documentation](https://docs.aws.amazon.com/general/latest/gr/ev.html#ev_region) |
+|[Amazon EventBridge](https://aws.amazon.com/eventbridge/)| Core service | Rules and custom event buses are used for notifying and detecting new resources.| [Documentation](https://docs.aws.amazon.com/general/latest/gr/ev.html#ev_region) |
 [AWS Step Functions](https://aws.amazon.com/step-functions/)| Core Service | Serverless state machine used for filtering, subscribing and updating information. | [Documentation](https://docs.aws.amazon.com/general/latest/gr/step-functions.html#ram_region) |
 [AWS Systems Manager](https://aws.amazon.com/systems-manager/)| Support Service | Used to store parameters that will later be shared. | [Documentation](https://docs.aws.amazon.com/general/latest/gr/ssm.html#ssm_region) |
 [AWS Resource Access Manager (RAM)](https://aws.amazon.com/ram/)| Support Service | Used to share parameters among accounts. | [Documentation](https://docs.aws.amazon.com/general/latest/gr/ram.html#ram_region) |
@@ -211,7 +211,7 @@ Encryption at rest is configured in the SQS queues (DLQ), using AWS-managed keys
 | Networking       | 3                                            | 1                                     |
 | Spoke            | 3                                            | 1                                     |
 
-Please see the detailed Implementation Guide [here](https://aws-solutions-library-samples.github.io/networking/amazon-vpc-lattice-automated-dns-configuration-on-aws.html) for step-by-step deployment instructions. 
+Please see the detailed Implementation Guide [here](https://aws-solutions-library-samples.github.io/networking/amazon-vpc-lattice-automated-dns-configuration-on-aws.html) for step-by-step guidance deployment and cleanup instructions. 
 
 ## License
 
