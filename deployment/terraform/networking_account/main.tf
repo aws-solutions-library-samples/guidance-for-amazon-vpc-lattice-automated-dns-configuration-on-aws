@@ -97,29 +97,40 @@ resource "aws_sfn_state_machine" "sfn_phz" {
   "States": {
     "Choice": {
       "Type": "Choice",
+      "Default": "Pass",
       "Choices": [
         {
-          "Variable": "$.detail-type",
-          "StringEquals": "ServiceCreated",
-          "Next": "ServiceCreated"
+          "Next": "ServiceCreated",
+          "Condition": "{% $states.input.\"detail-type\" = \"ServiceCreated\" %}",
+          "Output": {
+            "ServiceArn": "{% $states.input.detail.ServiceArn %}",
+            "CustomDomainName": "{% $states.input.detail.CustomDomainName %}",
+            "VpcLatticeDomainName": "{% $states.input.detail.DnsEntry.DomainName %}",
+            "VpcLatticeHostedZone": "{% $states.input.detail.DnsEntry.HostedZoneId %}"
+          }
         },
         {
-          "Variable": "$.detail-type",
-          "StringEquals": "ServiceDeleted",
-          "Next": "ListTagsForResource"
+          "Next": "ListTagsForResource",
+          "Condition": "{% $states.input.\"detail-type\" = \"ServiceDeleted\" %}",
+          "Assign": {
+            "ServiceArn": "{% $states.input.detail.ServiceArn %}"
+          }
         }
       ],
-      "Default": "Pass"
+      "QueryLanguage": "JSONata"
     },
     "ListTagsForResource": {
       "Type": "Task",
-      "Parameters": {
+      "Resource": "arn:aws:states:::aws-sdk:route53:listTagsForResource",
+      "Next": "CheckTags",
+      "QueryLanguage": "JSONata",
+      "Arguments": {
         "ResourceId": "${var.phz_id}",
         "ResourceType": "hostedzone"
       },
-      "Resource": "arn:aws:states:::aws-sdk:route53:listTagsForResource",
-      "ResultPath": "$.tags",
-      "Next": "CheckTags"
+      "Output": {
+        "HostedZoneTags": "{% $states.result.ResourceTagSet.Tags %}"
+      }
     },
     "CheckTags": {
       "Type": "Map",
@@ -131,14 +142,17 @@ resource "aws_sfn_state_machine" "sfn_phz" {
         "States": {
           "TagFound": {
             "Type": "Choice",
+            "Default": "DoNothing",
             "Choices": [
               {
-                "Variable": "$.serviceArn",
-                "StringEqualsPath": "$.tag.Key",
-                "Next": "ServiceDeleted"
+                "Next": "ServiceDeleted",
+                "Condition": "{% $states.input.Key = $ServiceArn %}",
+                "Assign": {
+                  "CustomDomainName": "{% $states.input.Value %}"
+                }
               }
             ],
-            "Default": "DoNothing"
+            "QueryLanguage": "JSONata"
           },
           "ServiceDeleted": {
             "Type": "Parallel",
@@ -148,12 +162,15 @@ resource "aws_sfn_state_machine" "sfn_phz" {
                 "States": {
                   "ListResourceRecordSets": {
                     "Type": "Task",
-                    "Parameters": {
+                    "Resource": "arn:aws:states:::aws-sdk:route53:listResourceRecordSets",
+                    "Next": "CheckRecords",
+                    "QueryLanguage": "JSONata",
+                    "Arguments": {
                       "HostedZoneId": "${var.phz_id}"
                     },
-                    "Resource": "arn:aws:states:::aws-sdk:route53:listResourceRecordSets",
-                    "ResultPath": "$.records",
-                    "Next": "CheckRecords"
+                    "Output": {
+                      "Records": "{% $states.result.ResourceRecordSets %}"
+                    }
                   },
                   "CheckRecords": {
                     "Type": "Map",
@@ -165,43 +182,42 @@ resource "aws_sfn_state_machine" "sfn_phz" {
                       "States": {
                         "RecordFound": {
                           "Type": "Choice",
+                          "Default": "NoAction",
                           "Choices": [
                             {
-                              "Variable": "$.recordName",
-                              "StringEqualsPath": "$.resourceRecord.Name",
-                              "Next": "DeleteResourceRecordSet"
+                              "Next": "DeleteResourceRecordSet",
+                              "Condition": "{% $states.input.Name = $join([$CustomDomainName,'.']) %}"
                             }
                           ],
-                          "Default": "NoAction"
+                          "QueryLanguage": "JSONata"
                         },
                         "DeleteResourceRecordSet": {
                           "Type": "Task",
-                          "Parameters": {
+                          "Resource": "arn:aws:states:::aws-sdk:route53:changeResourceRecordSets",
+                          "End": true,
+                          "QueryLanguage": "JSONata",
+                          "Arguments": {
                             "ChangeBatch": {
                               "Changes": [
                                 {
                                   "Action": "DELETE",
-                                  "ResourceRecordSet.$": "$.resourceRecord"
+                                  "ResourceRecordSet": "{% $states.input %}"
                                 }
                               ]
                             },
                             "HostedZoneId": "${var.phz_id}"
-                          },
-                          "Resource": "arn:aws:states:::aws-sdk:route53:changeResourceRecordSets",
-                          "End": true
+                          }
                         },
                         "NoAction": {
                           "Type": "Pass",
-                          "End": true
+                          "End": true,
+                          "QueryLanguage": "JSONata"
                         }
                       }
                     },
                     "End": true,
-                    "ItemsPath": "$.records.ResourceRecordSets",
-                    "ItemSelector": {
-                      "recordName.$": "States.Format('{}.',$.tag.Value)",
-                      "resourceRecord.$": "$$.Map.Item.Value"
-                    }
+                    "QueryLanguage": "JSONata",
+                    "Items": "{% $states.input.Records %}"
                   }
                 }
               },
@@ -210,31 +226,33 @@ resource "aws_sfn_state_machine" "sfn_phz" {
                 "States": {
                   "DeleteTag": {
                     "Type": "Task",
-                    "Parameters": {
+                    "Resource": "arn:aws:states:::aws-sdk:route53:changeTagsForResource",
+                    "End": true,
+                    "QueryLanguage": "JSONata",
+                    "Arguments": {
                       "ResourceId": "${var.phz_id}",
                       "ResourceType": "hostedzone",
-                      "RemoveTagKeys.$": "States.Array($.tag.Key)"
-                    },
-                    "Resource": "arn:aws:states:::aws-sdk:route53:changeTagsForResource",
-                    "End": true
+                      "RemoveTagKeys": [
+                        "{% $states.input.Key %}"
+                      ]
+                    }
                   }
                 }
               }
             ],
-            "End": true
+            "End": true,
+            "QueryLanguage": "JSONata"
           },
           "DoNothing": {
             "Type": "Pass",
-            "End": true
+            "End": true,
+            "QueryLanguage": "JSONata"
           }
         }
       },
       "End": true,
-      "ItemsPath": "$.tags.ResourceTagSet.Tags",
-      "ItemSelector": {
-        "serviceArn.$": "$.detail.ServiceArn",
-        "tag.$": "$$.Map.Item.Value"
-      }
+      "QueryLanguage": "JSONata",
+      "Items": "{% $states.input.HostedZoneTags %}"
     },
     "Pass": {
       "Type": "Pass",
@@ -248,27 +266,28 @@ resource "aws_sfn_state_machine" "sfn_phz" {
           "States": {
             "ChangeResourceRecordSetsAAAA": {
               "Type": "Task",
-              "Parameters": {
+              "Resource": "arn:aws:states:::aws-sdk:route53:changeResourceRecordSets",
+              "End": true,
+              "QueryLanguage": "JSONata",
+              "Arguments": {
+                "HostedZoneId": "${var.phz_id}",
                 "ChangeBatch": {
                   "Changes": [
                     {
                       "Action": "UPSERT",
                       "ResourceRecordSet": {
-                        "Name.$": "$.detail.CustomDomainName",
+                        "Name": "{% $states.input.CustomDomainName %}",
                         "Type": "AAAA",
                         "AliasTarget": {
-                          "HostedZoneId.$": "$.detail.DnsEntry.HostedZoneId",
-                          "DnsName.$": "$.detail.DnsEntry.DomainName",
+                          "HostedZoneId": "{% $states.input.VpcLatticeHostedZone %}",
+                          "DnsName": "{% $states.input.VpcLatticeDomainName %}",
                           "EvaluateTargetHealth": false
                         }
                       }
                     }
                   ]
-                },
-                "HostedZoneId": "${var.phz_id}"
-              },
-              "Resource": "arn:aws:states:::aws-sdk:route53:changeResourceRecordSets",
-              "End": true
+                }
+              }
             }
           }
         },
@@ -277,27 +296,28 @@ resource "aws_sfn_state_machine" "sfn_phz" {
           "States": {
             "CreateResourceRecordSet": {
               "Type": "Task",
-              "Parameters": {
+              "Resource": "arn:aws:states:::aws-sdk:route53:changeResourceRecordSets",
+              "End": true,
+              "QueryLanguage": "JSONata",
+              "Arguments": {
+                "HostedZoneId": "${var.phz_id}",
                 "ChangeBatch": {
                   "Changes": [
                     {
                       "Action": "UPSERT",
                       "ResourceRecordSet": {
-                        "Name.$": "$.detail.CustomDomainName",
+                        "Name": "{% $states.input.CustomDomainName %}",
                         "Type": "A",
                         "AliasTarget": {
-                          "HostedZoneId.$": "$.detail.DnsEntry.HostedZoneId",
-                          "DnsName.$": "$.detail.DnsEntry.DomainName",
+                          "HostedZoneId": "{% $states.input.VpcLatticeHostedZone %}",
+                          "DnsName": "{% $states.input.VpcLatticeDomainName %}",
                           "EvaluateTargetHealth": false
                         }
                       }
                     }
                   ]
-                },
-                "HostedZoneId": "${var.phz_id}"
-              },
-              "Resource": "arn:aws:states:::aws-sdk:route53:changeResourceRecordSets",
-              "End": true
+                }
+              }
             }
           }
         },
@@ -306,23 +326,25 @@ resource "aws_sfn_state_machine" "sfn_phz" {
           "States": {
             "CreateTag": {
               "Type": "Task",
-              "Parameters": {
+              "Resource": "arn:aws:states:::aws-sdk:route53:changeTagsForResource",
+              "End": true,
+              "QueryLanguage": "JSONata",
+              "Arguments": {
                 "ResourceId": "${var.phz_id}",
                 "ResourceType": "hostedzone",
                 "AddTags": [
                   {
-                    "Key.$": "$.detail.Arn",
-                    "Value.$": "$.detail.CustomDomainName"
+                    "Key": "{% $states.input.ServiceArn %}",
+                    "Value": "{% $states.input.CustomDomainName %}"
                   }
                 ]
-              },
-              "Resource": "arn:aws:states:::aws-sdk:route53:changeTagsForResource",
-              "End": true
+              }
             }
           }
         }
       ],
-      "End": true
+      "End": true,
+      "QueryLanguage": "JSONata"
     }
   }
 }
