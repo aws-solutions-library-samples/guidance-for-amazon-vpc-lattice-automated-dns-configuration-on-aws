@@ -20,7 +20,7 @@ Resources:
           - Effect: "Allow"
             Principal:
               Service:
-                - !Sub events.amazonaws.com
+                - events.amazonaws.com
             Action: sts:AssumeRole
       ManagedPolicyArns: 
         - !Ref EventBridgeRulesPolicy
@@ -89,87 +89,94 @@ Resources:
           "States": {
             "ActionType": {
               "Type": "Choice",
+              "Default": "Pass",
               "Choices": [
                 {
-                  "And": [
-                    {
-                      "Variable": "$.detail.tags.NewService",
-                      "IsPresent": true
-                    },
-                    {
-                      "Variable": "$.detail.tags.NewService",
-                      "StringEquals": "true"
-                    }
-                  ],
-                  "Next": "GetService"
+                  "Next": "GetService",
+                  "Condition": "{% $exists($states.input.detail.tags.NewService) and ($states.input.detail.tags.NewService = \"true\") %}",
+                  "Assign": {
+                    "VpcLatticeService": "{% $states.input.resources[0] %}",
+                    "ActionType": "ServiceCreated"
+                  }
                 },
                 {
-                  "Not": {
-                    "Variable": "$.detail.tags.NewService",
-                    "IsPresent": true
-                  },
-                  "Next": "PutEventServiceDeleted"
+                  "Next": "PutEventServiceDeleted",
+                  "Condition": "{% 'NewService' in $states.input.detail.'changed-tag-keys' and $not($exists($states.input.detail.tags.NewService)) %}",
+                  "Assign": {
+                    "VpcLatticeService": "{% $states.input.resources[0] %}",
+                    "ActionType": "ServiceDeleted"
+                  }
                 }
               ],
-              "Default": "Pass"
+              "QueryLanguage": "JSONata"
             },
             "Pass": {
               "Type": "Pass",
-              "End": true
+              "End": true,
+              "QueryLanguage": "JSONata"
             },
             "GetService": {
               "Type": "Task",
-              "Parameters": {
-                "ServiceIdentifier.$": "$.resources[0]"
-              },
               "Resource": "arn:aws:states:::aws-sdk:vpclattice:getService",
-              "ResultSelector": {
-                "ServiceInformation.$": "$"
+              "Next": "CustomDNSConfigured",
+              "QueryLanguage": "JSONata",
+              "Arguments": {
+                "ServiceIdentifier": "{% $VpcLatticeService %}"
               },
-              "Next": "CustomDNSConfigured"
+              "Output": {
+                "ServiceInformation": "{% $states.result %}",
+                "customDomainProvided": "{% $exists($states.result.CustomDomainName) %}"
+              }
             },
             "CustomDNSConfigured": {
               "Type": "Choice",
+              "Default": "Pass",
               "Choices": [
                 {
-                  "Variable": "$.ServiceInformation.CustomDomainName",
-                  "IsPresent": true,
-                  "Next": "PutEventServiceCreated"
+                  "Next": "PutEventServiceCreated",
+                  "Condition": "{% $states.input.customDomainProvided %}",
+                  "Output": {
+                    "ServiceArn": "{% $VpcLatticeService %}",
+                    "CustomDomainName": "{% $states.input.ServiceInformation.CustomDomainName %}",
+                    "DnsEntry": "{% $states.input.ServiceInformation.DnsEntry %}"
+                  }
                 }
               ],
-              "Default": "Pass"
+              "QueryLanguage": "JSONata"
             },
             "PutEventServiceCreated": {
               "Type": "Task",
               "Resource": "arn:aws:states:::aws-sdk:eventbridge:putEvents",
-              "Parameters": {
+              "End": true,
+              "QueryLanguage": "JSONata",
+              "Arguments": {
                 "Entries": [
                   {
-                    "Detail.$": "$.ServiceInformation",
-                    "DetailType": "ServiceCreated",
+                    "DetailType": "{% $ActionType %}",
+                    "Source": "vpclattice_information",
                     "EventBusName": "vpclattice_information",
-                    "Source": "vpclattice_information"
+                    "Detail": "{% $states.input %}"
                   }
                 ]
-              },
-              "End": true
+              }
             },
             "PutEventServiceDeleted": {
               "Type": "Task",
               "Resource": "arn:aws:states:::events:putEvents",
-              "Parameters": {
+              "End": true,
+              "QueryLanguage": "JSONata",
+              "Arguments": {
                 "Entries": [
                   {
-                    "Detail": {
-                      "ServiceArn.$": "$.resources[0]"
-                    },
-                    "DetailType": "ServiceDeleted",
+                    "DetailType": "{% $ActionType %}",
+                    "Source": "vpclattice_information",
                     "EventBusName": "vpclattice_information",
-                    "Source": "vpclattice_information"
+                    "Detail": {
+                      "ServiceArn": "{% $VpcLatticeService %}"
+                    }
                   }
                 ]
-              },
-              "End": true
+              }
             }
           }
         }
@@ -186,7 +193,7 @@ Resources:
           - Effect: "Allow"
             Principal:
               Service:
-                - !Sub states.amazonaws.com
+                - states.amazonaws.com
             Action: sts:AssumeRole
       ManagedPolicyArns: 
         - !Ref StepFunctionsPolicy
