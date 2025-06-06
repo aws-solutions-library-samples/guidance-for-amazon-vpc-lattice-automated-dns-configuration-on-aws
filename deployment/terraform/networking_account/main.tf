@@ -55,7 +55,13 @@ resource "aws_cloudwatch_event_rule" "cross_account_eventrule" {
 
   event_pattern = <<PATTERN
   {
-    "source": ["vpclattice_information"]
+    "source" : ["aws.tag"],
+    "detail-type" : ["Tag Change on Resource"],
+    "detail" : {
+        "changed-tag-keys": ["NewService"],
+        "service": ["vpc-lattice"],
+        "resource-type": ["service"]
+    }
   }
 PATTERN
 }
@@ -85,269 +91,299 @@ resource "aws_sqs_queue" "queue_deadletter" {
   sqs_managed_sse_enabled = true
 }
 
+# ---------- AMAZON DYNAMODB TABLE ----------
+resource "aws_dynamodb_table" "vpclattice_dnsautomation" {
+  name           = "VPCLattice_DNSAutomation"
+  read_capacity  = 5
+  write_capacity = 5
+  hash_key       = "ServiceArn"
+
+  attribute {
+    name = "ServiceArn"
+    type = "S"
+  }
+}
+
 # ---------- STEP FUNCTIONS (UPDATING PRIVATE HOSTED ZONE RECORD) ----------
 resource "aws_sfn_state_machine" "sfn_phz" {
   name     = "phz-configuration"
   role_arn = aws_iam_role.sfn_role.arn
 
   definition = <<EOF
-{
-  "Comment": "A description of my state machine",
-  "StartAt": "Choice",
-  "States": {
-    "Choice": {
-      "Type": "Choice",
-      "Default": "Pass",
-      "Choices": [
         {
-          "Next": "ServiceCreated",
-          "Condition": "{% $states.input.\"detail-type\" = \"ServiceCreated\" %}",
-          "Output": {
-            "ServiceArn": "{% $states.input.detail.ServiceArn %}",
-            "CustomDomainName": "{% $states.input.detail.CustomDomainName %}",
-            "VpcLatticeDomainName": "{% $states.input.detail.DnsEntry.DomainName %}",
-            "VpcLatticeHostedZone": "{% $states.input.detail.DnsEntry.HostedZoneId %}"
-          }
-        },
-        {
-          "Next": "ListTagsForResource",
-          "Condition": "{% $states.input.\"detail-type\" = \"ServiceDeleted\" %}",
-          "Assign": {
-            "ServiceArn": "{% $states.input.detail.ServiceArn %}"
-          }
-        }
-      ],
-      "QueryLanguage": "JSONata"
-    },
-    "ListTagsForResource": {
-      "Type": "Task",
-      "Resource": "arn:aws:states:::aws-sdk:route53:listTagsForResource",
-      "Next": "CheckTags",
-      "QueryLanguage": "JSONata",
-      "Arguments": {
-        "ResourceId": "${var.phz_id}",
-        "ResourceType": "hostedzone"
-      },
-      "Output": {
-        "HostedZoneTags": "{% $states.result.ResourceTagSet.Tags %}"
-      }
-    },
-    "CheckTags": {
-      "Type": "Map",
-      "ItemProcessor": {
-        "ProcessorConfig": {
-          "Mode": "INLINE"
-        },
-        "StartAt": "TagFound",
-        "States": {
-          "TagFound": {
-            "Type": "Choice",
-            "Default": "DoNothing",
-            "Choices": [
-              {
-                "Next": "ServiceDeleted",
-                "Condition": "{% $states.input.Key = $ServiceArn %}",
-                "Assign": {
-                  "CustomDomainName": "{% $states.input.Value %}"
+          "Comment": "Guidance for VPC Lattice automated DNS configuration on AWS (SO9532)",
+          "StartAt": "ActionType",
+          "States": {
+            "ActionType": {
+              "Type": "Choice",
+              "Default": "Pass",
+              "Choices": [
+                {
+                  "Next": "GetService",
+                  "Condition": "{% $exists($states.input.detail.tags.NewService) and ($states.input.detail.tags.NewService = \"true\") %}",
+                  "Assign": {
+                    "ServiceArn": "{% $states.input.resources[0] %}"
+                  }
+                },
+                {
+                  "Next": "GetDNSConfiguration",
+                  "Condition": "{% 'NewService' in $states.input.detail.'changed-tag-keys' and $not($exists($states.input.detail.tags.NewService)) %}",
+                  "Assign": {
+                    "ServiceArn": "{% $states.input.resources[0] %}"
+                  }
+                }
+              ],
+              "QueryLanguage": "JSONata"
+            },
+            "GetDNSConfiguration": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::dynamodb:getItem",
+              "Next": "Choice",
+              "QueryLanguage": "JSONata",
+              "Arguments": {
+                "TableName": "${aws_dynamodb_table.vpclattice_dnsautomation.id}",
+                "Key": {
+                  "ServiceArn": {
+                    "S": "{% $ServiceArn %}"
+                  }
                 }
               }
-            ],
-            "QueryLanguage": "JSONata"
-          },
-          "ServiceDeleted": {
-            "Type": "Parallel",
-            "Branches": [
-              {
-                "StartAt": "ListResourceRecordSets",
-                "States": {
-                  "ListResourceRecordSets": {
-                    "Type": "Task",
-                    "Resource": "arn:aws:states:::aws-sdk:route53:listResourceRecordSets",
-                    "Next": "CheckRecords",
-                    "QueryLanguage": "JSONata",
-                    "Arguments": {
-                      "HostedZoneId": "${var.phz_id}"
-                    },
-                    "Output": {
-                      "Records": "{% $states.result.ResourceRecordSets %}"
-                    }
-                  },
-                  "CheckRecords": {
-                    "Type": "Map",
-                    "ItemProcessor": {
-                      "ProcessorConfig": {
-                        "Mode": "INLINE"
+            },
+            "Choice": {
+              "Type": "Choice",
+              "Default": "Pass",
+              "Choices": [
+                {
+                  "Next": "DeleteDNSConfiguration",
+                  "Condition": "{% $exists($states.input.Item) %}",
+                  "Output": {
+                    "CustomDomainName": "{% $states.input.Item.CustomDomainName.S %}",
+                    "VpcLatticeDomainName": "{% $states.input.Item.VpcLatticeDomainName.S %}",
+                    "HostedZoneId": "{% $states.input.Item.HostedZoneId.S %}"
+                  }
+                }
+              ],
+              "QueryLanguage": "JSONata"
+            },
+            "DeleteDNSConfiguration": {
+              "Type": "Parallel",
+              "Branches": [
+                {
+                  "StartAt": "ListHostedZoneRecords",
+                  "States": {
+                    "ListHostedZoneRecords": {
+                      "Type": "Task",
+                      "Resource": "arn:aws:states:::aws-sdk:route53:listResourceRecordSets",
+                      "QueryLanguage": "JSONata",
+                      "Arguments": {
+                        "HostedZoneId": "{% $states.input.HostedZoneId %}"
                       },
-                      "StartAt": "RecordFound",
-                      "States": {
-                        "RecordFound": {
-                          "Type": "Choice",
-                          "Default": "NoAction",
-                          "Choices": [
-                            {
-                              "Next": "DeleteResourceRecordSet",
-                              "Condition": "{% $states.input.Name = $join([$CustomDomainName,'.']) %}"
-                            }
-                          ],
-                          "QueryLanguage": "JSONata"
-                        },
-                        "DeleteResourceRecordSet": {
-                          "Type": "Task",
-                          "Resource": "arn:aws:states:::aws-sdk:route53:changeResourceRecordSets",
-                          "End": true,
-                          "QueryLanguage": "JSONata",
-                          "Arguments": {
-                            "ChangeBatch": {
-                              "Changes": [
-                                {
-                                  "Action": "DELETE",
-                                  "ResourceRecordSet": "{% $states.input %}"
-                                }
-                              ]
-                            },
-                            "HostedZoneId": "${var.phz_id}"
-                          }
-                        },
-                        "NoAction": {
-                          "Type": "Pass",
-                          "End": true,
-                          "QueryLanguage": "JSONata"
-                        }
+                      "Output": {
+                        "Records": "{% $states.result.ResourceRecordSets %}"
+                      },
+                      "Next": "CheckHostedZoneRecords",
+                      "Assign": {
+                        "CustomDomainName": "{% $states.input.CustomDomainName %}"
                       }
                     },
-                    "End": true,
-                    "QueryLanguage": "JSONata",
-                    "Items": "{% $states.input.Records %}"
+                    "CheckHostedZoneRecords": {
+                      "Type": "Map",
+                      "ItemProcessor": {
+                        "ProcessorConfig": {
+                          "Mode": "INLINE"
+                        },
+                        "StartAt": "FoundRecord",
+                        "States": {
+                          "FoundRecord": {
+                            "Type": "Choice",
+                            "Default": "NoAction",
+                            "Choices": [
+                              {
+                                "Next": "DeleteResourceRecordSet",
+                                "Condition": "{% $states.input.Name = $join([$CustomDomainName,'.']) %}"
+                              }
+                            ],
+                            "QueryLanguage": "JSONata"
+                          },
+                          "NoAction": {
+                            "Type": "Pass",
+                            "End": true
+                          },
+                          "DeleteResourceRecordSet": {
+                            "Type": "Task",
+                            "Resource": "arn:aws:states:::aws-sdk:route53:changeResourceRecordSets",
+                            "End": true,
+                            "QueryLanguage": "JSONata",
+                            "Arguments": {
+                              "ChangeBatch": {
+                                "Changes": [
+                                  {
+                                    "Action": "DELETE",
+                                    "ResourceRecordSet": "{% $states.input %}"
+                                  }
+                                ]
+                              },
+                              "HostedZoneId": "${var.phz_id}"
+                            }
+                          }
+                        }
+                      },
+                      "End": true,
+                      "QueryLanguage": "JSONata",
+                      "Items": "{% $states.input.Records %}"
+                    }
+                  }
+                },
+                {
+                  "StartAt": "DeleteItem",
+                  "States": {
+                    "DeleteItem": {
+                      "Type": "Task",
+                      "Resource": "arn:aws:states:::dynamodb:deleteItem",
+                      "End": true,
+                      "QueryLanguage": "JSONata",
+                      "Arguments": {
+                        "TableName": "${aws_dynamodb_table.vpclattice_dnsautomation.id}",
+                        "Key": {
+                          "ServiceArn": "{% $ServiceArn %}"
+                        }
+                      }
+                    }
                   }
                 }
+              ],
+              "QueryLanguage": "JSONata",
+              "End": true
+            },
+            "GetService": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::aws-sdk:vpclattice:getService",
+              "Next": "CustomDNSConfigured",
+              "QueryLanguage": "JSONata",
+              "Output": {
+                "ServiceInformation": "{% $states.result %}",
+                "customDomainProvided": "{% $exists($states.result.CustomDomainName) %}"
               },
-              {
-                "StartAt": "DeleteTag",
-                "States": {
-                  "DeleteTag": {
-                    "Type": "Task",
-                    "Resource": "arn:aws:states:::aws-sdk:route53:changeTagsForResource",
-                    "End": true,
-                    "QueryLanguage": "JSONata",
-                    "Arguments": {
-                      "ResourceId": "${var.phz_id}",
-                      "ResourceType": "hostedzone",
-                      "RemoveTagKeys": [
-                        "{% $states.input.Key %}"
-                      ]
-                    }
+              "Arguments": {
+                "ServiceIdentifier": "{% $ServiceArn %}"
+              }
+            },
+            "CustomDNSConfigured": {
+              "Type": "Choice",
+              "Default": "Pass",
+              "Choices": [
+                {
+                  "Next": "ServiceCreated",
+                  "Condition": "{% $states.input.customDomainProvided %}",
+                  "Output": {
+                    "CustomDomainName": "{% $states.input.ServiceInformation.CustomDomainName %}",
+                    "DnsEntry": "{% $states.input.ServiceInformation.DnsEntry %}"
                   }
                 }
-              }
-            ],
-            "End": true,
-            "QueryLanguage": "JSONata"
-          },
-          "DoNothing": {
-            "Type": "Pass",
-            "End": true,
-            "QueryLanguage": "JSONata"
-          }
-        }
-      },
-      "End": true,
-      "QueryLanguage": "JSONata",
-      "Items": "{% $states.input.HostedZoneTags %}"
-    },
-    "Pass": {
-      "Type": "Pass",
-      "End": true
-    },
-    "ServiceCreated": {
-      "Type": "Parallel",
-      "Branches": [
-        {
-          "StartAt": "ChangeResourceRecordSetsAAAA",
-          "States": {
-            "ChangeResourceRecordSetsAAAA": {
-              "Type": "Task",
-              "Resource": "arn:aws:states:::aws-sdk:route53:changeResourceRecordSets",
-              "End": true,
-              "QueryLanguage": "JSONata",
-              "Arguments": {
-                "HostedZoneId": "${var.phz_id}",
-                "ChangeBatch": {
-                  "Changes": [
-                    {
-                      "Action": "UPSERT",
-                      "ResourceRecordSet": {
-                        "Name": "{% $states.input.CustomDomainName %}",
-                        "Type": "AAAA",
-                        "AliasTarget": {
-                          "HostedZoneId": "{% $states.input.VpcLatticeHostedZone %}",
-                          "DnsName": "{% $states.input.VpcLatticeDomainName %}",
-                          "EvaluateTargetHealth": false
+              ],
+              "QueryLanguage": "JSONata"
+            },
+            "Pass": {
+              "Type": "Pass",
+              "End": true
+            },
+            "ServiceCreated": {
+              "Type": "Parallel",
+              "Branches": [
+                {
+                  "StartAt": "ChangeResourceRecordSetsAAAA",
+                  "States": {
+                    "ChangeResourceRecordSetsAAAA": {
+                      "Type": "Task",
+                      "Resource": "arn:aws:states:::aws-sdk:route53:changeResourceRecordSets",
+                      "End": true,
+                      "QueryLanguage": "JSONata",
+                      "Arguments": {
+                        "HostedZoneId": "${var.phz_id}",
+                        "ChangeBatch": {
+                          "Changes": [
+                            {
+                              "Action": "UPSERT",
+                              "ResourceRecordSet": {
+                                "Name": "{% $states.input.CustomDomainName %}",
+                                "Type": "AAAA",
+                                "AliasTarget": {
+                                  "HostedZoneId": "{% $states.input.DnsEntry.HostedZoneId %}",
+                                  "DnsName": "{% $states.input.DnsEntry.DomainName %}",
+                                  "EvaluateTargetHealth": false
+                                }
+                              }
+                            }
+                          ]
                         }
                       }
                     }
-                  ]
-                }
-              }
-            }
-          }
-        },
-        {
-          "StartAt": "CreateResourceRecordSet",
-          "States": {
-            "CreateResourceRecordSet": {
-              "Type": "Task",
-              "Resource": "arn:aws:states:::aws-sdk:route53:changeResourceRecordSets",
-              "End": true,
-              "QueryLanguage": "JSONata",
-              "Arguments": {
-                "HostedZoneId": "${var.phz_id}",
-                "ChangeBatch": {
-                  "Changes": [
-                    {
-                      "Action": "UPSERT",
-                      "ResourceRecordSet": {
-                        "Name": "{% $states.input.CustomDomainName %}",
-                        "Type": "A",
-                        "AliasTarget": {
-                          "HostedZoneId": "{% $states.input.VpcLatticeHostedZone %}",
-                          "DnsName": "{% $states.input.VpcLatticeDomainName %}",
-                          "EvaluateTargetHealth": false
+                  }
+                },
+                {
+                  "StartAt": "CreateResourceRecordSet",
+                  "States": {
+                    "CreateResourceRecordSet": {
+                      "Type": "Task",
+                      "Resource": "arn:aws:states:::aws-sdk:route53:changeResourceRecordSets",
+                      "End": true,
+                      "QueryLanguage": "JSONata",
+                      "Arguments": {
+                        "HostedZoneId": "${var.phz_id}",
+                        "ChangeBatch": {
+                          "Changes": [
+                            {
+                              "Action": "UPSERT",
+                              "ResourceRecordSet": {
+                                "Name": "{% $states.input.CustomDomainName %}",
+                                "Type": "A",
+                                "AliasTarget": {
+                                  "HostedZoneId": "{% $states.input.DnsEntry.HostedZoneId %}",
+                                  "DnsName": "{% $states.input.DnsEntry.DomainName %}",
+                                  "EvaluateTargetHealth": false
+                                }
+                              }
+                            }
+                          ]
                         }
                       }
                     }
-                  ]
-                }
-              }
-            }
-          }
-        },
-        {
-          "StartAt": "CreateTag",
-          "States": {
-            "CreateTag": {
-              "Type": "Task",
-              "Resource": "arn:aws:states:::aws-sdk:route53:changeTagsForResource",
-              "End": true,
-              "QueryLanguage": "JSONata",
-              "Arguments": {
-                "ResourceId": "${var.phz_id}",
-                "ResourceType": "hostedzone",
-                "AddTags": [
-                  {
-                    "Key": "{% $states.input.ServiceArn %}",
-                    "Value": "{% $states.input.CustomDomainName %}"
                   }
-                ]
-              }
+                },
+                {
+                  "StartAt": "TrackAliasRecord",
+                  "States": {
+                    "TrackAliasRecord": {
+                      "Type": "Task",
+                      "Resource": "arn:aws:states:::dynamodb:putItem",
+                      "End": true,
+                      "QueryLanguage": "JSONata",
+                      "Arguments": {
+                        "TableName": "${aws_dynamodb_table.vpclattice_dnsautomation.id}",
+                        "Item": {
+                          "ServiceArn": {
+                            "S": "{% $ServiceArn %}"
+                          },
+                          "CustomDomainName": {
+                            "S": "{% $states.input.CustomDomainName %}"
+                          },
+                          "VpcLatticeDomainName": {
+                            "S": "{% $states.input.DnsEntry.DomainName %}"
+                          },
+                          "HostedZoneId": {
+                            "S": "${var.phz_id}"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              ],
+              "End": true,
+              "QueryLanguage": "JSONata"
             }
           }
         }
-      ],
-      "End": true,
-      "QueryLanguage": "JSONata"
-    }
-  }
-}
 EOF
 
   logging_configuration {

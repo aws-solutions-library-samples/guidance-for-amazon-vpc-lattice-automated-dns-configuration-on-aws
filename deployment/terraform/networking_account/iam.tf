@@ -21,10 +21,7 @@ data "aws_iam_policy_document" "eventbus_policy" {
       identifiers = ["*"]
     }
 
-    actions = [
-      "events:PutEvents",
-      "events:PutRule"
-    ]
+    actions = ["events:PutEvents"]
 
     condition {
       test     = "StringEquals"
@@ -100,6 +97,20 @@ resource "aws_iam_policy" "sfn_policy" {
 }
 
 data "aws_iam_policy_document" "sfn_policy" {
+  statement {
+    effect    = "Allow"
+    actions   = ["vpc-lattice:GetService"]
+    resources = ["*"]
+  }
+  statement {
+    effect = "Allow"
+    actions = [
+      "dynamodb:GetItem",
+      "dynamodb:PutItem",
+      "dynamodb:DeleteItem"
+    ]
+    resources = [aws_dynamodb_table.vpclattice_dnsautomation.arn]
+  }
   statement {
     effect = "Allow"
     actions = [
